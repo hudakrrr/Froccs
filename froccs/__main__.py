@@ -148,6 +148,9 @@ def main() -> int:
                 core.apply_scale(app)               # 0.3.0 and older missed a key
                 fixed = f" (display scaling {app.scale} % re-applied)"
             print(f"  kept: {app.name}{fixed}")
+        from . import devices
+        for p in devices.clean_documents_clutter():
+            print(f"  removed empty folder Wine left in Documents: {p}")
         return 0
     if ns.cmd == "doctor":
         icons = {health.OK: "✔", health.WARN: "!", health.BAD: "✘"}

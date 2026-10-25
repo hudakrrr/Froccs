@@ -1375,6 +1375,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.check_deps()
         self.refresh()
         run_bg(self._rescan_all)
+        run_bg(devices.clean_documents_clutter)
         self.start_prebuild()
         run_bg(updater.find_update, self._offer_update)
 

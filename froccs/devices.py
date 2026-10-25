@@ -16,7 +16,7 @@ import shutil
 from pathlib import Path
 
 from . import registry
-from .paths import HOME, dosdevices, wine_root, windows_user_dir
+from .paths import DATA_DIR, HOME, dosdevices, wine_root, windows_user_dir
 
 # Windows folder name -> XDG user-dir key
 SHARED_FOLDERS = {
@@ -71,10 +71,74 @@ def apply_home_links(app) -> None:
             link.mkdir()
 
 
+# Names Wine uses for profile folders. When Wine sets up a prefix (and again
+# after every Proton update) it creates the ones it can't link to your home
+# INSIDE whatever "Documents" points to - which for us is your real
+# Documents folder. Hence the empty Music, Pictures... folders there.
+WINE_PROFILE_NAMES = ("Music", "Pictures", "Videos", "Downloads", "Desktop", "Documents",
+                      "Templates", "My Music", "My Pictures", "My Videos", "My Documents")
+_JUNK_FILES = {"desktop.ini"}
+
+
+def _is_wine_leftover(p: Path, keep: set) -> bool:
+    """A link back to a profile folder, or a folder with nothing of yours in it."""
+    if p.is_symlink():
+        try:
+            target = Path(os.path.realpath(p))
+        except OSError:
+            return False
+        return (target in keep or target == HOME or not target.exists()
+                or str(target).startswith(str(DATA_DIR) + os.sep))
+    if p.is_dir() and Path(os.path.realpath(p)) not in keep:
+        try:
+            names = {c.name.lower() for c in p.iterdir()}
+        except OSError:
+            return False
+        return names <= _JUNK_FILES
+    return False
+
+
+def clean_documents_clutter() -> list[Path]:
+    """Remove Wine's empty profile folders from your real Documents folder.
+    Only empty ones (or ones holding just desktop.ini) and links Wine made are
+    touched - a folder with any file of yours in it is always kept."""
+    docs = xdg_dir("DOCUMENTS")
+    if not docs or not docs.is_dir():
+        return []
+    keep = {Path(os.path.realpath(d)) for d in
+            (xdg_dir(k) for k in SHARED_FOLDERS.values()) if d}
+    removed = []
+    for name in WINE_PROFILE_NAMES:
+        p = docs / name
+        try:
+            if not _is_wine_leftover(p, keep):
+                continue
+            if p.is_symlink():
+                p.unlink()
+            else:
+                for junk in p.iterdir():
+                    junk.unlink()
+                p.rmdir()
+            removed.append(p)
+        except OSError:
+            pass
+    return removed
+
+
 def _merge_into(folder: Path, target: Path) -> None:
-    """Move what's in the private folder to your real one, never overwriting."""
+    """Move what's in the private folder to your real one, never overwriting.
+    Wine's own profile folders/links are left behind, not moved."""
     leftovers = False
+    keep = {Path(os.path.realpath(d)) for d in
+            (xdg_dir(k) for k in SHARED_FOLDERS.values()) if d}
     for item in folder.iterdir():
+        if item.name in WINE_PROFILE_NAMES or item.name.lower() in _JUNK_FILES:
+            if _is_wine_leftover(item, keep):
+                if item.is_symlink() or item.is_file():
+                    item.unlink()
+                else:
+                    shutil.rmtree(item, ignore_errors=True)
+                continue
         dest = target / item.name
         if dest.exists() or dest.is_symlink():
             leftovers = True
@@ -230,6 +294,10 @@ def apply_all(app) -> None:
 def apply_on_launch(app) -> None:
     """Cheap re-check before each start (Proton may re-create Z: on updates)."""
     from .core import is_running
+    try:
+        clean_documents_clutter()   # left by the last run, e.g. after a Proton update
+    except OSError:
+        pass
     if is_running(app):
         return
     try:

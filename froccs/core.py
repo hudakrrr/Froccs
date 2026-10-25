@@ -629,6 +629,7 @@ def install(app: App, installer: Path, progress: Progress, stop=None,
         args = [str(installer)]
     _run(args, env, app.log_file, cwd=installer.parent, stop=stop)
     wait_until_idle(app.prefix, stop)
+    devices.clean_documents_clutter()          # Wine's empty Music, Pictures... folders
 
     progress(_("Looking for the installed program"), 0.97)
     return rank_candidates(before, list_exes(app.prefix)), failed
