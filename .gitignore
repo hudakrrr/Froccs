@@ -1,0 +1,15 @@
+# Python's compiled cache files (made automatically when the code runs)
+__pycache__/
+*.pyc
+
+# Release archives and website packages are uploaded as GitHub Releases,
+# not stored in the code history
+*.tar.gz
+*.zip
+*.froccs
+
+# Editor / system clutter
+.vscode/
+.idea/
+*.swp
+.DS_Store

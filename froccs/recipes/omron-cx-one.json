@@ -1,0 +1,14 @@
+{
+  "name": "Omron CX-One / CX-Programmer",
+  "match": "cx.?one|cx.?programmer|cx.?designer",
+  "dotnet": true,
+  "graphics": "wined3d",
+  "verbs": ["mfc42", "vcrun2008"],
+  "dll_overrides": {},
+  "registry": [],
+  "env": {},
+  "file_types": ["cxp"],
+  "warning": "Omron's USB drivers can't work under Wine. Connect to the PLC over a USB-serial adapter (map it under Settings → Files → Serial ports) or over Ethernet instead.",
+  "notes": "",
+  "source": "User reports"
+}

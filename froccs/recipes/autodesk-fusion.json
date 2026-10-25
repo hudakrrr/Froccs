@@ -1,0 +1,23 @@
+{
+  "name": "Autodesk Fusion",
+  "match": "fusion",
+  "dotnet": true,
+  "graphics": "dxvk",
+  "verbs": ["arial"],
+  "dll_overrides": {
+    "adpclientservice.exe": "disabled",
+    "msvcp140": "native,builtin",
+    "vcruntime140": "native,builtin",
+    "vcruntime140_1": "native,builtin",
+    "concrt140": "native,builtin",
+    "vcomp140": "native,builtin",
+    "atl140": "native,builtin"
+  },
+  "registry": [
+    ["HKCU\\Software\\Wine\\AppDefaults\\AdCefWebBrowser_dpiAware.exe\\DllOverrides", "d3d9", "REG_SZ", "builtin"]
+  ],
+  "env": {},
+  "file_types": ["f3d", "f3z"],
+  "notes": "Sign-in happens in your browser. When the browser asks to open the link, allow it. If login still doesn't reach Fusion, try adding FUSION_IDSDK=false under Settings → Launch options → Environment variables.",
+  "source": "Lutris Fusion installer and the cryinkfly Fusion-on-Linux project"
+}

@@ -1,0 +1,14 @@
+{
+  "name": "Autodesk (AutoCAD, Inventor, Revit…)",
+  "match": "autocad|inventor|revit|civil.?3d|3ds.?max|\\bmaya\\b",
+  "dotnet": true,
+  "graphics": "dxvk",
+  "verbs": [],
+  "dll_overrides": {"adpclientservice.exe": "disabled"},
+  "registry": [],
+  "env": {},
+  "file_types": [],
+  "warning": "Recent AutoCAD, Inventor and Revit versions often fail to install or start under Wine. It's worth a try, but plan for a Windows VM (WinBoat) if it doesn't work.",
+  "notes": "",
+  "source": "Autodesk/WineHQ user reports"
+}

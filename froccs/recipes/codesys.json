@@ -1,0 +1,15 @@
+{
+  "name": "CODESYS",
+  "match": "codesys",
+  "dotnet": true,
+  "graphics": "wined3d",
+  "verbs": ["vcrun2005", "vcrun2008", "vcrun2013"],
+  "dll_overrides": {},
+  "registry": [
+    ["HKLM\\Software\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\S-1-5-21-0-0-0-1000", null, null, null]
+  ],
+  "env": {},
+  "file_types": ["project", "library", "compiled-library"],
+  "notes": "In the CODESYS installer choose a custom setup and keep only CODESYS itself: deselect Gateway, OPC and Control services. Don't install the SVN plug-in, it breaks the installation.",
+  "source": "CODESYS Forge: CODESYS on Linux"
+}

@@ -1,0 +1,14 @@
+{
+  "name": "Siemens TIA Portal / STEP 7",
+  "match": "tia.?portal|step.?7|simatic|wincc",
+  "dotnet": true,
+  "graphics": "wined3d",
+  "verbs": [],
+  "dll_overrides": {},
+  "registry": [],
+  "env": {},
+  "file_types": [],
+  "warning": "TIA Portal and STEP 7 need Windows services and drivers that Wine doesn't have, so they almost certainly won't work here. Use a Windows VM (WinBoat) for them.",
+  "notes": "",
+  "source": "WineHQ AppDB and user reports"
+}
