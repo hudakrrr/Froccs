@@ -115,18 +115,6 @@ import | doctor | links | url | refresh | remove` (see `froccs --help`).
 Files live in `~/.local/share/froccs/` (prefixes, templates, snapshots,
 logs). Recipes are JSON files in `froccs/recipes/`, easy to add to.
 
-## Being realistic
-
-- **CODESYS:** works reasonably. The recipe reminds you which installer
-  options to skip.
-- **Fusion:** works with community fixes. Login goes through the browser
-  (supported).
-- **AutoCAD / Inventor:** hit-and-miss, especially newer versions.
-- **TIA Portal / STEP 7:** needs Windows drivers and services, so use a Windows
-  VM (WinBoat).
-- **USB PLC cables** with vendor drivers don't work. USB-serial adapters and
-  Ethernet do.
-
 ## License
 
 Fröccs is free software: you can use, study, share and change it under the terms
