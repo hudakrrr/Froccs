@@ -4,7 +4,7 @@
 program is Wine with something mixed in to make it better.
 
 Simple Windows-software installer for Linux. Proton under the hood (through
-umu-launcher), tuned for programs instead of games.
+umu-launcher), tuned for programs and games.
 
 ## Download
 
