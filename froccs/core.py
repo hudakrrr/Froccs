@@ -131,13 +131,14 @@ class App:
     env: dict = field(default_factory=dict)
     launch_options_on: bool = True
     dll_overrides: dict = field(default_factory=dict)
-    shortcuts: list = field(default_factory=list)   # extra menu entries [{name, exe}]
+    shortcuts: list = field(default_factory=list)   # extra menu entries [{name, exe, screen}]
     file_types: list = field(default_factory=list)  # [{ext, shortcut}] shortcut -1 = main
     file_types_removed: list = field(default_factory=list)
     protocols: list = field(default_factory=list)
     autostart: bool = False
     tray_window: bool = False     # Wine's little tray-icon window (GNOME has no tray)
     scale_auto: bool = False      # follow the screen's scaling at each start
+    screen: str = ""              # keep windows on this screen ("DP-2"), "" = any
     gamemode: bool = False        # Feral GameMode while running
     mangohud: bool = False        # FPS/performance overlay
     fps_limit: int = 0            # 0 = no limit
@@ -605,10 +606,7 @@ def install(app: App, installer: Path, progress: Progress, stop=None,
     apply_scale(app)
     devices.apply_all(app)
 
-    env = app_env(app)
-    if load_settings().get("speed_mode") and EATMYDATA:
-        # Turn "save to disk NOW" calls into no-ops during the install only.
-        env["LD_PRELOAD"] = (EATMYDATA + " " + env.get("LD_PRELOAD", "")).strip()
+    env = _installer_env(app)
 
     for n, verb in enumerate(extra_verbs):
         progress(_("Installing {what}").format(what=_(VERB_NAMES.get(verb, verb))), 0.6 + 0.08 * n / len(extra_verbs))
@@ -621,8 +619,23 @@ def install(app: App, installer: Path, progress: Progress, stop=None,
             _run(_reg_add_args(*edit), env, app.log_file)
         wait_until_idle(app.prefix)
 
-    before = list_exes(app.prefix)
     progress(running_installer_text(), 0.7)
+    return _run_installer(app, installer, env, progress, stop), failed
+
+
+def _installer_env(app: App) -> dict:
+    env = app_env(app)
+    if load_settings().get("speed_mode") and EATMYDATA:
+        # Turn "save to disk NOW" calls into no-ops during the install only.
+        env["LD_PRELOAD"] = (EATMYDATA + " " + env.get("LD_PRELOAD", "")).strip()
+    return env
+
+
+def _run_installer(app: App, installer: Path, env: dict, progress: Progress,
+                   stop=None) -> list[Path]:
+    """Run the installer in the app's prefix; return the new programs it left."""
+    from . import devices
+    before = list_exes(app.prefix)
     if installer.suffix.lower() == ".msi":
         args = ["msiexec", "/i", devices.to_windows_path(app, installer)]
     else:
@@ -632,7 +645,23 @@ def install(app: App, installer: Path, progress: Progress, stop=None,
     devices.clean_documents_clutter()          # Wine's empty Music, Pictures... folders
 
     progress(_("Looking for the installed program"), 0.97)
-    return rank_candidates(before, list_exes(app.prefix)), failed
+    return rank_candidates(before, list_exes(app.prefix))
+
+
+def install_into(app: App, installer: Path, progress: Progress, stop=None) -> list[Path]:
+    """
+    Install another program into an existing app's environment, e.g. a mod
+    manager next to a game. Both then share the C: drive, registry and
+    settings, so each sees the other's files. Returns the new programs.
+    """
+    if is_running(app):
+        raise InstallError(_("Close {name} first, then try again.").format(name=app.name))
+    if not drive_c(app.prefix).is_dir():
+        raise InstallError(_("{name}'s Windows environment is missing.").format(name=app.name))
+    progress(running_installer_text(), 0.3)
+    known = {os.path.normcase(p) for p in (app.exe, *(s["exe"] for s in app.shortcuts))}
+    return [c for c in _run_installer(app, installer, _installer_env(app), progress, stop)
+            if os.path.normcase(str(c)) not in known]
 
 
 def discard(app: App) -> None:
@@ -658,11 +687,12 @@ def _user_args(app: App) -> list[str]:
 
 
 def launch_detached(app: App, exe: Optional[str] = None, args: Optional[list] = None,
-                    user_args: bool = False) -> None:
+                    user_args: bool = False, shortcut: int = -1) -> None:
     """Start the app (or another exe in its prefix) without waiting."""
-    from . import devices, screens
+    from . import devices, placement, screens
     devices.apply_on_launch(app)
     screens.apply_auto(app)
+    placement.start_watcher(app)
     target = exe or app.exe
     _trim_log(app.log_file)
     app.log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -671,16 +701,17 @@ def launch_detached(app: App, exe: Optional[str] = None, args: Optional[list] = 
            *devices.win_args(app, args or [])]
     cwd = Path(target).parent if os.path.isabs(target) and Path(target).parent.is_dir() else None
     with open(app.log_file, "a") as log:
-        subprocess.Popen(cmd, env=app_env(app, "run", launch=True), cwd=cwd,
+        subprocess.Popen(cmd, env=app_env(app, "run", launch=True, shortcut=shortcut), cwd=cwd,
                          stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                          start_new_session=True)
 
 
 def exec_in_prefix(app: App, exe: str, args: list[str], shortcut: int = -1) -> None:
     """Become the umu-run process (no extra Python process left behind)."""
-    from . import devices, screens
+    from . import devices, placement, screens
     devices.apply_on_launch(app)
     screens.apply_auto(app)
+    placement.start_watcher(app)
     _trim_log(app.log_file)
     app.log_file.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(app.log_file, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)

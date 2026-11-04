@@ -384,6 +384,41 @@ HU = {
     "Language": "Nyelv",
     "Automatic (system language)": "Automatikus (rendszernyelv)",
     "Takes effect after restarting Fröccs.": "A Fröccs újraindítása után lép érvénybe.",
+    # --- 0.7: keep on screen, install next to another program
+    "Screen": "Kijelző",
+    "With more than one screen: keep the windows on one of them. They open there, and windows dragged away are brought back.":
+        "Több kijelző esetén: az ablakok az egyiken maradnak. Ott nyílnak meg, és ha elhúzod őket, visszakerülnek.",
+    "Keep windows on": "Ablakok helye",
+    "Any screen": "Bármelyik kijelző",
+    "{name} (not connected now)": "{name} (most nincs csatlakoztatva)",
+    "Not possible in native Wayland mode (Advanced → Wayland).": "Natív Wayland módban nem lehetséges (Speciális → Wayland).",
+    "Couldn't read the screens from your desktop.": "Nem sikerült kiolvasni a kijelzőket az asztali környezetből.",
+    "Only one screen is connected right now.": "Most csak egy kijelző van csatlakoztatva.",
+    "left": "bal", "right": "jobb", "middle": "középső", "top": "felső", "bottom": "alsó",
+    "main screen": "fő kijelző",
+    "Install into": "Telepítés ide",
+    "A new, separate environment": "Új, különálló környezet",
+    "Next to {name}": "{name} mellé",
+    "Shares the C: drive with {name}": "Közös C: meghajtó ezzel: {name}",
+    "Both programs see each other's files, like on one Windows PC. Display scaling, Proton version and the other settings are {name}'s.":
+        "A két program látja egymás fájljait, mint egy Windowsos gépen. A méretezés, a Proton-verzió és a többi beállítás a(z) {name} beállítása.",
+    "This installer seems to need .NET Framework 4.8, which {name}'s environment doesn't have. It may not work.":
+        "Úgy tűnik, ennek a telepítőnek .NET Framework 4.8 kell, ami a(z) {name} környezetében nincs meg. Lehet, hogy nem fog működni.",
+    "{what} has its own recommended settings, which are only applied in a new environment.":
+        "A(z) {what} saját ajánlott beállításai csak új környezetben kerülnek alkalmazásra.",
+    "{name} was removed.": "A(z) {name} el lett távolítva.",
+    "Close {name} first, then try again.": "Előbb zárd be: {name}, aztán próbáld újra.",
+    "{name}'s Windows environment is missing.": "A(z) {name} Windows-környezete hiányzik.",
+    "Creating a restore point of {name}": "Visszaállítási pont készítése: {name}",
+    "Which new programs get an apps-menu entry?": "Mely új programok kapjanak menübejegyzést?",
+    "They start inside {name}'s environment. You can also start them from {name}'s ⋮ menu in Fröccs.":
+        "A(z) {name} környezetében indulnak. A Fröccsben a(z) {name} ⋮ menüjéből is elindíthatod őket.",
+    "No new program was found. Use “Browse…” to pick it yourself, or just close this if you don't need a menu entry.":
+        "Nem található új program. A „Tallózás…” gombbal kiválaszthatod magad, vagy zárd be, ha nem kell menübejegyzés.",
+    "Installed next to {name}": "Telepítve a(z) {name} mellé",
+    "Start {name}": "{name} indítása",
+    "Install another program here…": "Másik program telepítése ide…",
+    "Choose an installer to put next to {name}": "Válassz telepítőt a(z) {name} mellé",
 }
 
 LANGUAGES = {"hu": HU}

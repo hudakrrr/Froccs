@@ -46,15 +46,34 @@ cd froccs
 - After installing, tick which programs go in your apps menu. The first one is
   the main program; the others become extra entries (configuration tools etc.).
 
-Each program's ⋮ menu: Start, Settings, Run another .exe here, Paste a login
+Each program's ⋮ menu: Start (plus *Start …* for each extra program in it),
+Settings, Install another program here, Run another .exe here, Paste a login
 link, Open C: drive, Create restore point, Export, Force stop, Show log,
 Remove. In grid view, right-click a tile.
+
+### Several programs in one environment
+
+Some programs need to see each other's files, for example a game and its mod
+manager (CurseForge, Vortex…). Use ⋮ → **Install another program here…**, or
+pick *Install into → Next to …* when adding software. The installer runs inside
+the existing program's environment (same C: drive, registry and settings), a
+restore point is made first, and the new programs you tick get their own
+apps-menu entries. Command line: `froccs add <installer> --into <id>`.
+
+### Keep a program on one screen
+
+With more than one monitor: Settings → General → **Screen**. Windows open on the
+chosen screen, and windows dragged off it are moved back. Fullscreen games go
+fullscreen there. Each apps-menu entry can have its own screen (e.g. the game on
+the big monitor, the mod manager on the other). Works on GNOME, KDE and X11
+desktops. It doesn't work in native Wayland mode, because Wayland doesn't let
+one program move another's windows. `froccs screens` lists the screen names.
 
 ### Settings per program
 
 | Page | What's there |
 |---|---|
-| General | name, **display scaling**, start at login, launch arguments and environment variables (with an on/off switch), apps-menu entries |
+| General | name, **display scaling**, **screen** (multi-monitor), start at login, launch arguments and environment variables (with an on/off switch), apps-menu entries |
 | Files | use my own Documents/Desktop/Downloads, hide drive Z:, extra drive letters, **file types** ("Open with"), **serial ports** COM1–COM4 for PLC cables |
 | Advanced | Proton version (pin one), graphics (Vulkan/OpenGL), NTSYNC, native Wayland, DLL overrides, login links, debug mode |
 | Backup | **restore points** (create, restore, delete), export to a `.froccs` file |
@@ -110,7 +129,7 @@ preparation, automatic restore points, install-speed options, language).
   fsync calls become no-ops.
 
 Command line: `froccs list | add | run | scale | stop | snapshot | export |
-import | doctor | links | url | refresh | remove` (see `froccs --help`).
+import | doctor | links | url | refresh | remove | screens` (see `froccs --help`).
 
 Files live in `~/.local/share/froccs/` (prefixes, templates, snapshots,
 logs). Recipes are JSON files in `froccs/recipes/`, easy to add to.

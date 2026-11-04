@@ -27,7 +27,7 @@ gi.require_version("Pango", "1.0")
 from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango  # noqa: E402
 
 from . import (__version__, analyze, backup, core, devices, distro, fonts, health,  # noqa: E402
-               integration, maint, proton, recipes, screens, updater)
+               integration, maint, placement, proton, recipes, screens, updater)
 from .i18n import _  # noqa: E402
 from .paths import APP_ID, EXPORT_SUFFIX, LOG_DIR, drive_c  # noqa: E402
 
@@ -188,11 +188,17 @@ def app_icon(app: core.App, size: int) -> Gtk.Image:
 
 class AddDialog(Adw.Dialog):
     """Options -> progress -> choose programs -> done.
-    With `imported=(app, candidates)` it starts at the last step."""
+    With `imported=(app, candidates)` it starts at the last step.
+    With `target=app` the installer goes into that app's environment (for
+    example a mod manager next to a game) instead of a new one."""
 
-    def __init__(self, window: "MainWindow", installer: Path | None = None, imported=None):
+    def __init__(self, window: "MainWindow", installer: Path | None = None, imported=None,
+                 target: core.App | None = None):
         super().__init__(title=_("Add software"), content_width=500, content_height=620)
         self.window, self.installer = window, installer
+        self.target = target              # chosen in the options page
+        self.into: core.App | None = None  # set when the install starts into an existing app
+        self.apps = core.load_apps()
         self.app: core.App | None = None
         self.recipe: recipes.Recipe | None = None
         self.analysis: analyze.Analysis | None = None
@@ -223,6 +229,15 @@ class AddDialog(Adw.Dialog):
         page = Adw.PreferencesPage()
         g = Adw.PreferencesGroup(description=_("Installer: {name}").format(name=self.installer.name))
         page.add(g)
+        self.into_row = Adw.ComboRow(
+            title=_("Install into"),
+            model=string_list([_("A new, separate environment")]
+                              + [_("Next to {name}").format(name=a.name) for a in self.apps]))
+        if self.target:
+            self.into_row.set_selected(1 + [a.id for a in self.apps].index(self.target.id))
+        self.into_row.connect("notify::selected", lambda *_a: self._update_into())
+        if self.apps:
+            g.add(self.into_row)
         self.name_row = Adw.EntryRow(title=_("Name in the apps menu"))
         self.name_row.set_text(core.guess_name(self.installer))
         g.add(self.name_row)
@@ -232,6 +247,9 @@ class AddDialog(Adw.Dialog):
             self.scale.set_subtitle(_("Your screen runs at {pct} %. 100 % = normal size.")
                                     .format(pct=detected))
         g.add(self.scale)
+        self.into_group = Adw.PreferencesGroup()      # filled by _update_into
+        self.into_rows: list[Gtk.Widget] = []
+        page.add(self.into_group)
 
         self.info_group = Adw.PreferencesGroup()
         self.checking = row(_("Checking the installer…"))
@@ -249,8 +267,10 @@ class AddDialog(Adw.Dialog):
                                     model=string_list([_(t) for _k, t in GRAPHICS]))
         exp.add_row(self.dotnet_row)
         exp.add_row(self.gfx_row)
+        self.adv_exp = exp
         adv.add(exp)
         page.add(adv)
+        self._update_into()
 
         btn = Gtk.Button(label=_("Install"), halign=Gtk.Align.CENTER,
                          css_classes=["suggested-action", "pill"], margin_top=12)
@@ -259,6 +279,41 @@ class AddDialog(Adw.Dialog):
         g2.add(btn)
         page.add(g2)
         return page
+
+    def _selected_target(self) -> core.App | None:
+        i = self.into_row.get_selected()
+        return self.apps[i - 1] if 0 < i <= len(self.apps) else None
+
+    def _update_into(self):
+        """Settings like scaling and .NET belong to the environment, so they
+        are fixed when installing next to an existing program."""
+        t = self._selected_target()
+        self.scale.set_sensitive(t is None)
+        self.adv_exp.set_sensitive(t is None)
+        self.name_row.set_title(_("Name in the apps menu"))
+        for r in self.into_rows:
+            self.into_group.remove(r)
+        self.into_rows = []
+        if t is None:
+            return
+        info = row(_("Shares the C: drive with {name}").format(name=t.name),
+                   _("Both programs see each other's files, like on one Windows PC. "
+                     "Display scaling, Proton version and the other settings are "
+                     "{name}'s.").format(name=t.name), subtitle_lines=0)
+        info.add_prefix(Gtk.Image(icon_name="emblem-shared-symbolic"))
+        self.into_rows.append(info)
+        need_dotnet = (self.recipe.dotnet if self.recipe else
+                       self.analysis.dotnet if self.analysis else False)
+        if need_dotnet and not t.dotnet:
+            self.into_rows.append(warning_row(_(
+                "This installer seems to need .NET Framework 4.8, which {name}'s "
+                "environment doesn't have. It may not work.").format(name=t.name)))
+        if self.recipe and (self.recipe.verbs or self.recipe.registry):
+            self.into_rows.append(warning_row(_(
+                "{what} has its own recommended settings, which are only applied in a "
+                "new environment.").format(what=self.recipe.name)))
+        for r in self.into_rows:
+            self.into_group.add(r)
 
     def _on_analyzed(self, a: analyze.Analysis):
         self.analysis = a
@@ -298,6 +353,7 @@ class AddDialog(Adw.Dialog):
                 "This program uses modern .NET. Most installers bring it along; if the "
                 "program says it's missing, install the .NET Desktop Runtime from "
                 "Microsoft with “Run another .exe here”.")))
+        self._update_into()
 
     # -- page 2: progress
     def _progress_page(self) -> Gtk.Widget:
@@ -332,6 +388,7 @@ class AddDialog(Adw.Dialog):
         finish = Gtk.Button(label=_("Add to apps menu"), halign=Gtk.Align.CENTER,
                             css_classes=["suggested-action", "pill"], margin_top=12)
         finish.connect("clicked", self._finish)
+        self.finish_btn = finish
         g = Adw.PreferencesGroup()
         g.add(finish)
         page.add(g)
@@ -340,6 +397,10 @@ class AddDialog(Adw.Dialog):
 
     # -- actions
     def _start(self, *_a):
+        t = self._selected_target()
+        if t is not None:
+            self._start_into(t)
+            return
         name = self.name_row.get_text().strip() or core.guess_name(self.installer)
         r = self.recipe
         self.app = core.App(
@@ -366,6 +427,27 @@ class AddDialog(Adw.Dialog):
             self._on_error(msg)
         run_bg(work, lambda res: self._on_installed(*res), failed)
 
+    def _start_into(self, target: core.App):
+        app = core.get_app(target.id)          # fresh copy: settings may have changed
+        if app is None:
+            self._on_error(_("{name} was removed.").format(name=target.name))
+            return
+        if core.is_running(app):
+            self.window.toast(_("Close {name} first, then try again.").format(name=app.name))
+            return
+        self.app = self.into = app
+        self.set_can_close(False)
+        self.stack.set_visible_child_name("progress")
+
+        def progress(text, frac):
+            GLib.idle_add(self._on_progress, text, frac)
+
+        def work():
+            progress(_("Creating a restore point of {name}").format(name=app.name), 0.1)
+            backup.maybe_auto_snapshot(app, "Before installing another program")
+            return core.install_into(app, self.installer, progress, self.stop), []
+        run_bg(work, lambda res: self._on_installed(*res), self._on_error)
+
     def _on_progress(self, text, frac):
         self.status.set_text(text)
         self.bar.set_fraction(frac)
@@ -382,7 +464,15 @@ class AddDialog(Adw.Dialog):
         self.set_can_close(True)
         for i, path in enumerate(cands):
             self._add_choice(path, active=(i == 0))
-        if not cands:
+        if self.into:
+            self.choose_group.set_title(_("Which new programs get an apps-menu entry?"))
+            self.choose_group.set_description(
+                _("They start inside {name}'s environment. You can also start them from "
+                  "{name}'s ⋮ menu in Fröccs.").format(name=self.into.name) if cands else
+                _("No new program was found. Use “Browse…” to pick it yourself, or just "
+                  "close this if you don't need a menu entry."))
+            self.finish_btn.set_label(_("Done"))
+        elif not cands:
             self.choose_group.set_description(
                 _("No new program was found. Use “Browse…” to pick it yourself."))
         if failed:
@@ -413,6 +503,16 @@ class AddDialog(Adw.Dialog):
 
     def _finish(self, *_a):
         exes = [p for c, p in self.choices if c.get_active()]
+        if self.into:
+            app = core.get_app(self.into.id) or self.into
+            if exes:
+                name = self.name_row.get_text().strip() if self.installer else ""
+                integration.add_programs(app, exes, name)
+            self.finished = True
+            self.window.refresh()
+            self.window.toast(_("Installed next to {name}").format(name=app.name))
+            self.close()
+            return
         if not exes:
             self._browse()
             return
@@ -423,6 +523,8 @@ class AddDialog(Adw.Dialog):
         self.close()
 
     def _on_closed(self, *_a):
+        if self.into:
+            return                                     # never throw away an existing app
         if self.app and not self.finished and not core.get_app(self.app.id):
             run_bg(lambda: core.discard(self.app))    # clean up a half-made app
 
@@ -476,6 +578,8 @@ class SettingsDialog(Adw.PreferencesDialog):
         g.add(self.tray)
         page.add(g)
 
+        page.add(self._screen_group())
+
         lo = Adw.PreferencesGroup(title=_("Launch options"))
         self.lo_on = Adw.SwitchRow(title=_("Use launch options"))
         self.lo_on.set_active(self.app.launch_options_on)
@@ -499,7 +603,70 @@ class SettingsDialog(Adw.PreferencesDialog):
         self._fill_shortcuts()
         return page
 
+    # ---- Screen (multi-monitor)
+    def _screen_group(self):
+        self.monitors = placement.monitors()
+        names = {}
+        try:                        # "Dell U2723QE" etc. from GTK, keyed by connector
+            mons = Gdk.Display.get_default().get_monitors()
+            for i in range(mons.get_n_items()):
+                m = mons.get_item(i)
+                label = " ".join(filter(None, (m.get_manufacturer(), m.get_model())))
+                if m.get_connector() and label:
+                    names[m.get_connector()] = label
+        except Exception:
+            pass
+        self.screen_labels = [placement.describe(m, self.monitors, names)
+                              for m in self.monitors]
+        self.screen_group = Adw.PreferencesGroup(
+            title=_("Screen"),
+            description=_("With more than one screen: keep the windows on one of them. "
+                          "They open there, and windows dragged away are brought back."))
+        self.screen_rows: list[tuple[Adw.ComboRow, list[str], dict | None]] = []
+        self._fill_screens()
+        return self.screen_group
+
+    def _harvest_screens(self):
+        """Copy the screen choices into the app (dicts = extra menu entries)."""
+        for r, keys, target in self.screen_rows:
+            i = r.get_selected()
+            val = keys[i] if 0 <= i < len(keys) else ""
+            if target is None:
+                self.app.screen = val
+            else:
+                target["screen"] = val
+
+    def _fill_screens(self):
+        self._harvest_screens()
+        for r, _k, _t in self.screen_rows:
+            self.screen_group.remove(r)
+        self.screen_rows = []
+        entries = [(self.app.name, None)] + [(s["name"], s) for s in self.app.shortcuts]
+        for title, target in entries:
+            cur = self.app.screen if target is None else target.get("screen", "")
+            keys = [""] + [m.name for m in self.monitors]
+            labels = [_("Any screen")] + self.screen_labels
+            if cur and cur not in keys:
+                keys.append(cur)
+                labels.append(_("{name} (not connected now)").format(name=cur))
+            r = Adw.ComboRow(title=title if len(entries) > 1 else _("Keep windows on"),
+                             model=string_list(labels))
+            r.set_selected(keys.index(cur))
+            if self.app.wayland:
+                r.set_subtitle(_("Not possible in native Wayland mode (Advanced → Wayland)."))
+                r.set_sensitive(bool(cur))
+            elif not self.monitors:
+                r.set_subtitle(_("Couldn't read the screens from your desktop."))
+                r.set_sensitive(bool(cur))
+            elif len(self.monitors) < 2:
+                r.set_subtitle(_("Only one screen is connected right now."))
+                r.set_sensitive(bool(cur))
+            self.screen_group.add(r)
+            self.screen_rows.append((r, keys, target))
+
     def _fill_shortcuts(self):
+        if hasattr(self, "screen_group"):
+            self._fill_screens()            # one screen choice per menu entry
         for r in self.sc_rows:
             self.sc_group.remove(r)
         self.sc_rows = []
@@ -959,6 +1126,7 @@ class SettingsDialog(Adw.PreferencesDialog):
         a.gamemode = self.gamemode.get_active()
         a.mangohud = self.mangohud.get_active()
         a.fps_limit = int(self.fps.get_value())
+        self._harvest_screens()
         core.upsert_app(a)
         integration.write_desktop_files(a)
         window = self.window
@@ -968,6 +1136,8 @@ class SettingsDialog(Adw.PreferencesDialog):
                 backup.maybe_auto_snapshot(a, "Before changing the Proton version")
             if not core.is_running(a):
                 devices.apply_all(a)
+            else:
+                placement.start_watcher(a)      # screen chosen while it runs
             if a.scale_auto:
                 screens.apply_auto(a)
                 return False
@@ -1353,6 +1523,8 @@ class MainWindow(Adw.ApplicationWindow):
                          ("other", self.a_other), ("link", self.a_link),
                          ("drive", self.a_drive), ("snapshot", self.a_snapshot),
                          ("export", self.a_export), ("stop", self.a_stop),
+                         ("install-into", self.a_install_into),
+                         ("launch-entry", self.a_launch_entry),
                          ("fonts", self.a_fonts),
                          ("log", self.a_log), ("remove", self.a_remove)):
             act = Gio.SimpleAction.new(name, GLib.VariantType.new("s"))
@@ -1451,10 +1623,14 @@ class MainWindow(Adw.ApplicationWindow):
     def _menu_for(self, app: core.App) -> Gio.Menu:
         menu = Gio.Menu()
         s1 = Gio.Menu()
-        for label, act in ((_("Start"), "launch"), (_("Settings"), "settings")):
-            s1.append(label, f"win.{act}::{app.id}")
+        s1.append(_("Start"), f"win.launch::{app.id}")
+        for i, sc in enumerate(app.shortcuts):           # programs installed next to it
+            s1.append(_("Start {name}").format(name=sc["name"]),
+                      f"win.launch-entry::{app.id}:{i}")
+        s1.append(_("Settings"), f"win.settings::{app.id}")
         s2 = Gio.Menu()
-        for label, act in ((_("Run another .exe here…"), "other"),
+        for label, act in ((_("Install another program here…"), "install-into"),
+                           (_("Run another .exe here…"), "other"),
                            (_("Paste a login link…"), "link"),
                            (_("Open C: drive"), "drive"),
                            (_("Install fonts…"), "fonts"),
@@ -1588,6 +1764,26 @@ class MainWindow(Adw.ApplicationWindow):
             core.launch_detached(app, user_args=True)
             core.schedule_rescan(app)
             self.toast(_("Starting {name}…").format(name=app.name))
+
+    def a_launch_entry(self, _a, param):
+        app_id, _sep, idx = param.get_string().rpartition(":")
+        app = core.get_app(app_id)
+        if app and idx.isdigit() and int(idx) < len(app.shortcuts):
+            i = int(idx)
+            core.launch_detached(app, app.shortcut_exe(i), user_args=True, shortcut=i)
+            core.schedule_rescan(app)
+            self.toast(_("Starting {name}…").format(name=app.shortcuts[i]["name"]))
+
+    def a_install_into(self, _a, param):
+        app = self._app(param)
+        if not app:
+            return
+        if core.is_running(app):
+            self.toast(_("Close {name} first, then try again.").format(name=app.name))
+            return
+        pick_file(self, _("Choose an installer to put next to {name}").format(name=app.name),
+                  ["*.exe", "*.msi"], downloads_dir(),
+                  lambda path: AddDialog(self, path, target=app).present(self))
 
     def a_settings(self, _a, param):
         if app := self._app(param):

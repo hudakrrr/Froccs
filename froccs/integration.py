@@ -376,6 +376,17 @@ def finalize(app: core.App, exes: list[Path]) -> None:
     core.upsert_app(app)
 
 
+def add_programs(app: core.App, exes: list[Path], first_name: str = "") -> None:
+    """After installing more software into an existing app: each picked
+    program becomes an extra apps-menu entry that starts in the same prefix."""
+    for i, exe in enumerate(exes):
+        add_shortcut(app, exe, first_name if i == 0 else "")
+    register_protocols(app)
+    merge_detected_file_types(app)
+    write_desktop_files(app)
+    core.upsert_app(app)
+
+
 def add_shortcut(app: core.App, exe: Path, name: str = "") -> None:
     i = len(app.shortcuts)
     app.shortcuts.append({"name": name or re.sub(r"[_\-]+", " ", exe.stem), "exe": str(exe),

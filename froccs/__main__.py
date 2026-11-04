@@ -4,6 +4,7 @@ froccs <installer.exe|.froccs>   open the window with that file
 froccs run <id> [--shortcut N] [files]   start an app (used by menu entries)
 froccs list                     list installed apps
 froccs add <installer> [--name N] [--scale 125] [--dotnet]
+froccs add <installer> --into <id>   install next to an app (same C: drive), e.g. a mod manager
 froccs scale <id> <percent>
 froccs stop <id>                force-stop everything the app runs
 froccs snapshot <id> [label]    create a restore point
@@ -15,6 +16,8 @@ froccs links <id>               re-scan login links and file types, show status
 froccs refresh                  rebuild menu entries (run by install.sh on update)
 froccs migrate                  move an older setup over (run by install.sh)
 froccs remove <id>
+froccs screens                  list the screens (names for "keep on screen")
+froccs keep-on-screen <id>      keep the app's windows on their screen (started at launch)
 """
 import argparse
 import subprocess
@@ -24,11 +27,45 @@ from pathlib import Path
 from . import analyze, backup, core, health, integration, recipes
 
 
+def _progress(text, frac):
+    print(f"[{frac * 100:3.0f}%] {text.splitlines()[0]}")
+
+
+def _pick(cands: list[Path], prompt: str, default: str) -> list[Path]:
+    for i, c in enumerate(cands, 1):
+        print(f"  {i}) {c}")
+    pick = input(prompt).strip() or default
+    return [cands[int(p) - 1] for p in pick.split(",")
+            if p.strip().isdigit() and 0 < int(p) <= len(cands)]
+
+
+def cli_add_into(ns, installer: Path) -> int:
+    app = core.get_app(ns.into)
+    if not app:
+        print(f"No app with id '{ns.into}'. See: froccs list")
+        return 1
+    backup.maybe_auto_snapshot(app, "Before installing another program")
+    try:
+        cands = core.install_into(app, installer, _progress)
+    except Exception as e:
+        print(f"Failed: {e}")
+        return 1
+    if not cands:
+        print(f"Installed into {app.name}. No new program found for the apps menu.")
+        return 0
+    exes = _pick(cands, "Which ones get an apps-menu entry? (e.g. 1 or 1,3; 0 = none) [1]: ", "1")
+    integration.add_programs(app, exes, ns.name or "")
+    print(f"Installed into {app.name}; {len(exes)} new apps-menu entr{'y' if len(exes) == 1 else 'ies'}")
+    return 0
+
+
 def cli_add(ns) -> int:
     installer = Path(ns.installer).expanduser().resolve()
     if not installer.is_file():
         print(f"Not found: {installer}")
         return 1
+    if ns.into:
+        return cli_add_into(ns, installer)
     name = ns.name or core.guess_name(installer)
     a = analyze.analyze(installer)
     r = recipes.find(installer.name, name)
@@ -47,11 +84,8 @@ def cli_add(ns) -> int:
     for w in a.warnings:
         print(f"WARNING: {w}")
 
-    def progress(text, frac):
-        print(f"[{frac * 100:3.0f}%] {text.splitlines()[0]}")
-
     try:
-        cands, failed = core.install(app, installer, progress,
+        cands, failed = core.install(app, installer, _progress,
                                      extra_verbs=tuple(r.verbs) if r else (),
                                      reg_edits=tuple(tuple(e) for e in r.registry) if r else ())
     except Exception as e:
@@ -64,10 +98,8 @@ def cli_add(ns) -> int:
         exe = input(f"No new program found. Path to the .exe (under {core.drive_c(app.prefix)}): ")
         exes = [Path(exe)]
     else:
-        for i, c in enumerate(cands, 1):
-            print(f"  {i}) {c}")
-        pick = input("Which ones go in the apps menu? (e.g. 1 or 1,3) [1]: ").strip() or "1"
-        exes = [cands[int(p) - 1] for p in pick.split(",") if p.strip().isdigit()]
+        exes = _pick(cands, "Which ones go in the apps menu? (e.g. 1 or 1,3) [1]: ", "1") \
+            or cands[:1]
     integration.finalize(app, exes)
     print(f"Added '{app.name}' to the apps menu (id: {app.id})")
     return 0
@@ -95,7 +127,9 @@ def main() -> int:
     a.add_argument("--name")
     a.add_argument("--scale", type=int, default=core.load_settings()["default_scale"])
     a.add_argument("--dotnet", action="store_true")
-    for cmd in ("stop", "remove", "links"):
+    a.add_argument("--into", metavar="ID", help="install into this app's environment")
+    sub.add_parser("screens")
+    for cmd in ("stop", "remove", "links", "keep-on-screen"):
         sub.add_parser(cmd).add_argument("id")
     s = sub.add_parser("scale")
     s.add_argument("id")
@@ -152,6 +186,19 @@ def main() -> int:
         for p in devices.clean_documents_clutter():
             print(f"  removed empty folder Wine left in Documents: {p}")
         return 0
+    if ns.cmd == "screens":
+        from . import placement
+        mons = placement.monitors()
+        if not mons:
+            print("Couldn't read the screens (no X11/XWayland display).")
+            return 1
+        for m in mons:
+            print(f"  {m.name:12} {m.width}x{m.height} at {m.x},{m.y}"
+                  f"{'  (main screen)' if m.primary else ''}")
+        return 0
+    if ns.cmd == "keep-on-screen":
+        from . import placement
+        return placement.watch(ns.id)
     if ns.cmd == "doctor":
         icons = {health.OK: "✔", health.WARN: "!", health.BAD: "✘"}
         for c in health.run_checks():

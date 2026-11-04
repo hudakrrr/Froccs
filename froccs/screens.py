@@ -115,7 +115,10 @@ def desktop_scales_x11_apps() -> bool:
     try:
         Gio = _gio()
         src = Gio.SettingsSchemaSource.get_default()
-        if src is None or src.lookup("org.gnome.mutter", True) is None:
+        schema = src.lookup("org.gnome.mutter", True) if src else None
+        # GNOME 51 removed the key; asking GSettings for a missing key aborts
+        # the whole process (not a Python exception), so check first.
+        if schema is None or not schema.has_key("experimental-features"):
             return True
         features = Gio.Settings.new("org.gnome.mutter").get_strv("experimental-features")
         return "xwayland-native-scaling" not in features
