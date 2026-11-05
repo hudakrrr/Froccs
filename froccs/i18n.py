@@ -195,7 +195,8 @@ HU = {
     "Not connected": "Nincs hozzárendelve",
     "Compatibility": "Kompatibilitás",
     "Proton version": "Proton-verzió",
-    "Pin a version so updates can't break a working program.": "Rögzíts egy verziót, hogy a frissítések ne tehessenek tönkre egy működő programot.",
+    "Pin a version so updates can't break a working program. Valve's own builds installed in Steam are listed too.":
+        "Rögzíts egy verziót, hogy a frissítések ne tehessenek tönkre egy működő programot. A Steamben telepített, Valve-féle változatok is itt vannak.",
     "NTSYNC": "NTSYNC",
     "Native Wayland (experimental)": "Natív Wayland (kísérleti)",
     "Sharper on scaled screens, but some programs break.": "Méretezett kijelzőn élesebb, de egyes programok hibásan működnek vele.",
@@ -221,8 +222,8 @@ HU = {
     "Go back to this restore point?": "Visszatérsz erre a visszaállítási pontra?",
     "The program is closed and everything since then is undone. Files you saved in your own folders are kept.":
         "A program bezárul, és minden azóta történt változás elvész. A saját mappáidba mentett fájlok megmaradnak.",
-    "Programs set to “Newest” use the newest version here. Pinned programs keep theirs. Versions in use can't be deleted.":
-        "A „Legújabb” beállítású programok az itteni legújabb verziót használják, a rögzítettek megtartják a sajátjukat. Használatban lévő verzió nem törölhető.",
+    "Programs set to “Newest” use the newest version here. Pinned programs keep theirs. Versions in use can't be deleted. Valve's Proton builds installed in Steam (Proton 10.0, Experimental…) can be pinned too; manage those in Steam.":
+        "A „Legújabb” beállítású programok az itteni legújabb verziót használják, a rögzítettek megtartják a sajátjukat. Használatban lévő verzió nem törölhető. A Steamben telepített Valve-féle Proton-változatok (Proton 10.0, Experimental…) is rögzíthetők; ezeket a Steamben kezeld.",
     "Download": "Letöltés",
     "Not used": "Nincs használatban",
     "None yet": "Még nincs",
@@ -326,6 +327,13 @@ HU = {
         "További betűtípusok ehhez a programhoz, pl. rajzokon használt ISO- vagy céges betűtípusok. Módosításuk előtt zárd be a programot.",
     "Install fonts…": "Betűtípusok telepítése…",
     "Games": "Játékok",
+    "Real fullscreen": "Valódi teljes képernyő",
+    "Fullscreen games cover the top bar instead of ending up one bar shorter than the screen. Turn off if a program's window goes fullscreen when it shouldn't.":
+        "A teljes képernyős játékok a felső sávot is eltakarják, és nem lesznek egy sávnyival kisebbek a képernyőnél. Kapcsold ki, ha egy program ablaka akkor is teljes képernyős lesz, amikor nem kellene.",
+    "Run in Gamescope": "Futtatás Gamescope-ban",
+    "Valve's game compositor (as on the Steam Deck): always true fullscreen, the game sees exactly one screen. Try it when a game's window, resolution or mouse misbehaves.":
+        "A Valve játékokhoz készült kompozitora (mint a Steam Decken): mindig valódi teljes képernyő, a játék pontosan egy kijelzőt lát. Próbáld ki, ha egy játék ablaka, felbontása vagy egere rosszul viselkedik.",
+    "From Steam": "A Steamből",
     "GameMode": "GameMode",
     "MangoHud overlay": "MangoHud-átfedés",
     "On Btrfs, copies share data, so the real total is often lower than the sum.":

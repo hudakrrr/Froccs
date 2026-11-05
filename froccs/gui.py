@@ -877,10 +877,12 @@ class SettingsDialog(Adw.PreferencesDialog):
         g = Adw.PreferencesGroup(title=_("Compatibility"))
         self.builds = proton.installed()
         latest = proton.newest_ge()
-        labels = [_("Newest (currently {name})").format(name=latest or "GE-Proton")] + self.builds
+        labels = ([_("Newest (currently {name})").format(name=latest or "GE-Proton")]
+                  + [proton.label(n) for n in self.builds])
         self.proton_row = Adw.ComboRow(
             title=_("Proton version"),
-            subtitle=_("Pin a version so updates can't break a working program."),
+            subtitle=_("Pin a version so updates can't break a working program. "
+                       "Valve's own builds installed in Steam are listed too."),
             model=string_list(labels))
         if self.app.proton in self.builds:
             self.proton_row.set_selected(self.builds.index(self.app.proton) + 1)
@@ -916,13 +918,31 @@ class SettingsDialog(Adw.PreferencesDialog):
         self._fill_dlls()
 
         gm = Adw.PreferencesGroup(title=_("Games"))
+        self.fullscreen_fix = Adw.SwitchRow(
+            title=_("Real fullscreen"),
+            subtitle=_("Fullscreen games cover the top bar instead of ending up one bar "
+                       "shorter than the screen. Turn off if a program's window goes "
+                       "fullscreen when it shouldn't."))
+        self.fullscreen_fix.set_active(self.app.fullscreen_fix)
+        gm.add(self.fullscreen_fix)
+        have_gs = bool(shutil.which("gamescope"))
+        self.gamescope = Adw.SwitchRow(
+            title=_("Run in Gamescope"),
+            subtitle=_("Valve's game compositor (as on the Steam Deck): always true "
+                       "fullscreen, the game sees exactly one screen. Try it when a "
+                       "game's window, resolution or mouse misbehaves.")
+            if have_gs else
+            _("Not installed: {cmd}").format(cmd=distro.install_hint("gamescope")))
+        self.gamescope.set_active(self.app.gamescope and have_gs)
+        self.gamescope.set_sensitive(have_gs)
+        gm.add(self.gamescope)
         self.gamemode = Adw.SwitchRow(
             title=_("GameMode"),
             subtitle=_("Switches the computer to full performance while the program runs.")
-            if shutil.which("gamemoderun") else
+            if core.gamemode_available() else
             _("Not installed: {cmd}").format(cmd=distro.install_hint("gamemode")))
         self.gamemode.set_active(self.app.gamemode)
-        self.gamemode.set_sensitive(bool(shutil.which("gamemoderun")))
+        self.gamemode.set_sensitive(core.gamemode_available())
         gm.add(self.gamemode)
         self.mangohud = Adw.SwitchRow(
             title=_("MangoHud overlay"),
@@ -1126,6 +1146,9 @@ class SettingsDialog(Adw.PreferencesDialog):
         a.gamemode = self.gamemode.get_active()
         a.mangohud = self.mangohud.get_active()
         a.fps_limit = int(self.fps.get_value())
+        a.fullscreen_fix = self.fullscreen_fix.get_active()
+        if self.gamescope.get_sensitive():
+            a.gamescope = self.gamescope.get_active()
         self._harvest_screens()
         core.upsert_app(a)
         integration.write_desktop_files(a)
@@ -1158,7 +1181,9 @@ class ProtonDialog(Adw.Dialog):
         page = Adw.PreferencesPage()
         self.group = Adw.PreferencesGroup(
             description=_("Programs set to “Newest” use the newest version here. Pinned "
-                          "programs keep theirs. Versions in use can't be deleted."))
+                          "programs keep theirs. Versions in use can't be deleted. "
+                          "Valve's Proton builds installed in Steam (Proton 10.0, "
+                          "Experimental…) can be pinned too; manage those in Steam."))
         page.add(self.group)
         dl = Adw.PreferencesGroup()
         self.dl_row = row(_("Download the newest GE-Proton"), _("About 500 MB"))
@@ -1190,8 +1215,11 @@ class ProtonDialog(Adw.Dialog):
                    else _("Not used"))
             if name == newest:
                 sub = _("Newest") + "  ·  " + sub
+            steam = proton.is_steam_build(name)
+            if steam:
+                sub = _("From Steam") + "  ·  " + sub
             r = row(name, sub)
-            if not users:
+            if not users and not steam:
                 b = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER,
                                css_classes=["flat"], tooltip_text=_("Delete"))
                 b.connect("clicked", lambda _b, n=name: (proton.remove(n), self._fill()))

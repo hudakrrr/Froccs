@@ -69,13 +69,36 @@ the big monitor, the mod manager on the other). Works on GNOME, KDE and X11
 desktops. It doesn't work in native Wayland mode, because Wayland doesn't let
 one program move another's windows. `froccs screens` lists the screen names.
 
+### Games
+
+Settings → Advanced → *Games*:
+
+- **Real fullscreen** (on by default). Many games (World of Warcraft, most
+  "windowed fullscreen"/borderless modes) don't ask for fullscreen. They open a
+  frameless window as big as the screen, and the desktop keeps it below the top
+  bar, so the game ends up one bar shorter than the screen. Fröccs spots such
+  windows and makes them real fullscreen on their screen. Turn it off for a
+  program whose window goes fullscreen when it shouldn't.
+- **Run in Gamescope**: the game runs inside Valve's Gamescope (as on the Steam
+  Deck). It's always true fullscreen and the game sees exactly one screen. Try it
+  when a game's window, resolution or mouse misbehaves. Needs the `gamescope`
+  package.
+- **GameMode**: now actually switches on. `gamemoderun` couldn't work inside
+  Proton's Steam Runtime container, so Fröccs asks the GameMode service directly.
+- **Proton version**: Valve's own builds that Steam installed (Proton 10.0,
+  Proton - Experimental…) can be pinned next to GE-Proton. GE-Proton is Valve's
+  Proton plus extra fixes, so it stays the default. Valve's build is worth a try
+  when a game breaks on GE-Proton.
+- Proton's Xalia gamepad helper is turned off (on a PC it only costs CPU).
+  Put `PROTON_USE_XALIA=1` in the environment variables to get it back.
+
 ### Settings per program
 
 | Page | What's there |
 |---|---|
 | General | name, **display scaling**, **screen** (multi-monitor), start at login, launch arguments and environment variables (with an on/off switch), apps-menu entries |
 | Files | use my own Documents/Desktop/Downloads, hide drive Z:, extra drive letters, **file types** ("Open with"), **serial ports** COM1–COM4 for PLC cables |
-| Advanced | Proton version (pin one), graphics (Vulkan/OpenGL), NTSYNC, native Wayland, DLL overrides, login links, debug mode |
+| Advanced | Proton version (pin one, including Valve's builds from Steam), graphics (Vulkan/OpenGL), NTSYNC, native Wayland, DLL overrides, **games** (real fullscreen, Gamescope, GameMode, MangoHud, FPS limit), login links, debug mode |
 | Backup | **restore points** (create, restore, delete), export to a `.froccs` file |
 
 ### Main menu
@@ -104,7 +127,7 @@ preparation, automatic restore points, install-speed options, language).
 - **Compatibility links** in the Add dialog: WineHQ AppDB and ProtonDB search for
   the program.
 - **Printing** check in the health check (CUPS running, printers, PDF printer).
-- **Games:** GameMode, MangoHud overlay and an FPS limit per program.
+- **Games:** GameMode, MangoHud overlay and an FPS limit per program (see *Games* above).
 
 ## Under the hood
 

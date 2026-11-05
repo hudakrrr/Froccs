@@ -36,6 +36,7 @@ PACKAGES = {
     "cups-pdf": {"debian": ["printer-driver-cups-pdf"], "*": ["cups-pdf"]},
     "gamemode": {"*": ["gamemode"]},
     "mangohud": {"*": ["mangohud"]},
+    "gamescope": {"*": ["gamescope"]},
     "eatmydata": {"debian": ["eatmydata"], "*": ["libeatmydata"]},
 }
 

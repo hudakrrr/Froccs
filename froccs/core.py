@@ -142,6 +142,8 @@ class App:
     gamemode: bool = False        # Feral GameMode while running
     mangohud: bool = False        # FPS/performance overlay
     fps_limit: int = 0            # 0 = no limit
+    fullscreen_fix: bool = True   # promote "screen minus top bar" game windows to fullscreen
+    gamescope: bool = False       # run inside Valve's Gamescope (always real fullscreen)
     fonts: list = field(default_factory=list)       # font files we installed
     share_home: bool = True       # Documents, Desktop... = your real folders
     drives: dict = field(default_factory=dict)      # {"d": "/path"}
@@ -307,8 +309,11 @@ def app_env(app: App, verb: Optional[str] = None, launch: bool = False,
     env["WINEDLLOVERRIDES"] = dll_override_string(app.dll_overrides)
     if app.graphics == "wined3d":
         env["PROTON_USE_WINED3D"] = "1"
-    if app.wayland:
+    if app.wayland and not use_gamescope(app):
         env["PROTON_ENABLE_WAYLAND"] = "1"
+    # Xalia is Proton's gamepad helper for desktop programs (Steam Deck). On a
+    # PC it only costs CPU and fills the log with exceptions.
+    env["PROTON_USE_XALIA"] = "0"
     if app.ntsync and ntsync_available():
         env["PROTON_USE_NTSYNC"] = "1"
     if app.debug:
@@ -701,9 +706,10 @@ def launch_detached(app: App, exe: Optional[str] = None, args: Optional[list] = 
            *devices.win_args(app, args or [])]
     cwd = Path(target).parent if os.path.isabs(target) and Path(target).parent.is_dir() else None
     with open(app.log_file, "a") as log:
-        subprocess.Popen(cmd, env=app_env(app, "run", launch=True, shortcut=shortcut), cwd=cwd,
-                         stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                         start_new_session=True)
+        proc = subprocess.Popen(cmd, env=app_env(app, "run", launch=True, shortcut=shortcut),
+                                cwd=cwd, stdin=subprocess.DEVNULL, stdout=log,
+                                stderr=subprocess.STDOUT, start_new_session=True)
+    request_gamemode(app, proc.pid)
 
 
 def exec_in_prefix(app: App, exe: str, args: list[str], shortcut: int = -1) -> None:
@@ -720,14 +726,61 @@ def exec_in_prefix(app: App, exe: str, args: list[str], shortcut: int = -1) -> N
     if Path(exe).parent.is_dir():
         os.chdir(Path(exe).parent)
     cmd = [*wrappers(app), umu_path() or "umu-run", exe, *args]
+    request_gamemode(app, os.getpid())        # exec keeps the PID
     os.execvpe(cmd[0], cmd, app_env(app, "run", launch=True, shortcut=shortcut))
 
 
+def gamemode_available() -> bool:
+    return bool(shutil.which("gamemoded") or shutil.which("gamemoderun"))
+
+
+def request_gamemode(app: App, pid: int) -> None:
+    """
+    `gamemoderun` works by preloading libgamemodeauto into the program. Proton
+    runs programs inside the Steam Runtime container, where the library it
+    then loads (libgamemode.so) doesn't exist, so GameMode never switched on.
+    Instead we ask the GameMode service directly to treat umu-run's process
+    as a game. It switches back by itself when that process ends.
+    """
+    if not app.gamemode or not shutil.which("gamemoded"):
+        return
+    subprocess.Popen(["gamemoded", f"-r{pid}"], stdin=subprocess.DEVNULL,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)
+
+
+def use_gamescope(app: App) -> bool:
+    return app.gamescope and bool(shutil.which("gamescope"))
+
+
+def gamescope_command(app: App) -> list[str]:
+    """
+    Gamescope is Valve's small compositor for games (the Steam Deck uses it).
+    The game draws into Gamescope's own window, and that window is a normal
+    fullscreen Wayland/X11 window: the desktop's top bar can't get in the way
+    and the game always sees exactly one screen of the right size.
+    """
+    from . import placement
+    mons = placement.monitors()
+    mon = next((m for m in mons if app.screen and m.name == app.screen), None) \
+        or next((m for m in mons if m.primary), None) or (mons[0] if mons else None)
+    cmd = ["gamescope", "-f", "--force-grab-cursor"]
+    if mon:
+        cmd += ["-W", str(mon.width), "-H", str(mon.height)]
+    if app.fps_limit > 0:
+        cmd += ["-r", str(app.fps_limit)]
+    if app.mangohud and shutil.which("mangohud"):
+        cmd.append("--mangoapp")              # MangoHud the Gamescope way
+    return cmd + ["--"]
+
+
 def wrappers(app: App) -> list[str]:
-    """Programs that start the app for us: gamemoderun / mangohud."""
+    """Programs that start the app for us: gamescope / gamemoderun / mangohud."""
+    if use_gamescope(app):
+        return gamescope_command(app)
     out = []
-    if app.gamemode and shutil.which("gamemoderun"):
-        out.append("gamemoderun")
+    if app.gamemode and not shutil.which("gamemoded") and shutil.which("gamemoderun"):
+        out.append("gamemoderun")             # old fallback, see request_gamemode
     if app.mangohud and shutil.which("mangohud"):
         out.append("mangohud")
     return out

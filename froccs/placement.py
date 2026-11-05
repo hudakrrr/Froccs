@@ -17,6 +17,15 @@ A small watcher process (`froccs keep-on-screen <id>`) starts with the program,
 moves new windows to the chosen screen and brings back any that leave it,
 and exits a little after the program closes.
 
+The same watcher fixes "fullscreen that isn't": many games (World of Warcraft,
+most "borderless"/"windowed fullscreen" modes) don't ask for fullscreen, they
+just open a frameless window as big as the screen. The window manager treats
+that as an ordinary window and keeps it out from under the top bar, so the
+game ends up exactly one bar shorter than the screen. When we see a frameless
+window that spans a whole screen except for (at most) a bar's worth, we ask
+the window manager to make it properly fullscreen on that screen. Wine then
+tells the game its window got bigger, and the game fills the screen.
+
 Programs in native Wayland mode (Advanced → Wayland) can't be moved this way:
 Wayland doesn't let one program position another's windows.
 """
@@ -74,6 +83,7 @@ _ignore_errors = _ERROR_HANDLER(lambda _d, _e: 0)   # windows vanish all the tim
 CLIENT_MESSAGE = 33
 SUBSTRUCTURE_MASKS = (1 << 19) | (1 << 20)          # redirect + notify
 XA_ATOM, XA_WINDOW = 4, 33
+ANY_PROPERTY_TYPE = 0
 
 
 def _lib(name: str):
@@ -244,6 +254,17 @@ class X11:
     def states(self, win: int) -> set[str]:
         return {self.atom_name(a) for a in self._prop32(win, "_NET_WM_STATE", XA_ATOM)}
 
+    def frameless(self, win: int) -> bool:
+        """No title bar or border drawn by the window manager."""
+        extents = self._prop32(win, "_NET_FRAME_EXTENTS", ANY_PROPERTY_TYPE)
+        if any(extents):
+            return False
+        # Motif hints: [flags, functions, decorations, ...]; flag 2 = decorations set
+        hints = self._prop32(win, "_MOTIF_WM_HINTS", ANY_PROPERTY_TYPE)
+        if len(hints) >= 3 and hints[0] & 2:
+            return hints[2] == 0
+        return bool(extents)        # WM said "0 border" explicitly
+
     def _message(self, win: int, name: str, data: list[int]) -> None:
         ev = _XEvent()
         ev.xclient.type = CLIENT_MESSAGE
@@ -307,12 +328,31 @@ def describe(m: Monitor, all_monitors: list[Monitor], gdk_names: dict[str, str])
     return " · ".join(parts)
 
 
+def classes_for(app) -> set[str]:
+    """Window classes of the program and its extra menu entries (lowercase)."""
+    from . import core
+    return {core.window_class(app, i).lower() for i in range(-1, len(app.shortcuts))}
+
+
+def fixes_fullscreen(app) -> bool:
+    # Native Wayland windows can't be touched; Gamescope is fullscreen anyway.
+    return bool(getattr(app, "fullscreen_fix", False) and not getattr(app, "wayland", False)
+                and not (getattr(app, "gamescope", False) and _have("gamescope")))
+
+
+def _have(cmd: str) -> bool:
+    import shutil
+    return bool(shutil.which(cmd))
+
+
 def rules_for(app) -> dict[str, str]:
     """{window class: screen name} for the program and its extra menu entries."""
     from . import core
     out = {}
     if getattr(app, "wayland", False):
         return out                        # native Wayland windows can't be moved
+    if getattr(app, "gamescope", False) and _have("gamescope"):
+        return out                        # Gamescope's window isn't the program's
     if app.screen:
         out[core.window_class(app, -1).lower()] = app.screen
     for i, s in enumerate(app.shortcuts):
@@ -323,7 +363,7 @@ def rules_for(app) -> dict[str, str]:
 
 def start_watcher(app) -> None:
     """Called at every launch; the watcher itself makes sure only one runs."""
-    if not rules_for(app) or not os.environ.get("DISPLAY"):
+    if not (rules_for(app) or fixes_fullscreen(app)) or not os.environ.get("DISPLAY"):
         return
     import subprocess
     from . import core
@@ -339,6 +379,38 @@ class _Seen:
     pos: tuple[int, int] = (-1, -1)
     tries: int = 0
     fs_tries: int = 0
+    geo: tuple = ()               # last geometry, to know when it stood still
+    still: int = 0                # polls in a row with the same geometry
+    fix_tries: int = 0            # fullscreen-fix attempts for this window
+
+
+def _monitor_of(geo, mons) -> Optional[Monitor]:
+    cx, cy = geo[0] + geo[2] // 2, geo[1] + geo[3] // 2
+    return next((m for m in mons if m.contains(cx, cy)), None)
+
+
+def wants_fullscreen(geo, states: set[str], frameless: bool, mon: Monitor) -> bool:
+    """
+    A frameless window that is as wide as the screen and as tall as it except
+    for a bar's worth (top bar, dock: up to 10 %) is a game in "windowed
+    fullscreen" that the window manager squeezed below the top bar. Maximized
+    windows are left alone: those are programs that want to stay below it.
+    """
+    if not frameless or states & {"_NET_WM_STATE_FULLSCREEN", "_NET_WM_STATE_MAXIMIZED_VERT",
+                                  "_NET_WM_STATE_MAXIMIZED_HORZ", "_NET_WM_STATE_HIDDEN"}:
+        return False
+    x, y, w, h = geo
+    slack = mon.height // 10
+    if abs(x - mon.x) > 2 or abs(w - mon.width) > 2:
+        return False
+    if not (mon.y <= y <= mon.y + slack) or h < mon.height - slack:
+        return False
+    return (x, y, w, h) != (mon.x, mon.y, mon.width, mon.height)
+
+
+def _make_fullscreen(x: X11, win: int, mon: Monitor) -> None:
+    x.fullscreen_on(win, mon.index)
+    x.set_state(win, True, "_NET_WM_STATE_FULLSCREEN")
 
 
 def _target_position(geo, mon: Monitor) -> tuple[int, int]:
@@ -348,8 +420,18 @@ def _target_position(geo, mon: Monitor) -> tuple[int, int]:
     return x, y
 
 
-def _place(x: X11, win: int, geo, mon: Monitor, seen: _Seen) -> None:
+def _place(x: X11, win: int, geo, mon: Monitor, seen: _Seen, fix: bool = False,
+           mons: tuple = ()) -> None:
     st = x.states(win)
+    here = _monitor_of(geo, mons)
+    if here and "_NET_WM_STATE_FULLSCREEN" not in st and x.frameless(win):
+        covers = tuple(geo) == (here.x, here.y, here.width, here.height)
+        if covers or (fix and wants_fullscreen(geo, st, True, here)):
+            # A frameless screen-sized window: GNOME won't move it at all (and
+            # would squeeze it below the top bar if it did). "Be fullscreen on
+            # that screen" works.
+            _make_fullscreen(x, win, mon)
+            return
     if "_NET_WM_STATE_FULLSCREEN" in st:
         if seen.fs_tries < 2:
             # the clean way: "be fullscreen on that screen"
@@ -401,13 +483,14 @@ def watch(app_id: str) -> int:
         return 0                                    # another watcher has it
 
     rules, app = _load_rules(app_id)
-    if not rules or app is None:
+    if app is None or not (rules or fixes_fullscreen(app)):
         return 0
     try:
         x = X11()
     except OSError:
         return 1
     prefix = app.prefix
+    classes, fix = classes_for(app), fixes_fullscreen(app)
     db_mtime = DB_FILE.stat().st_mtime if DB_FILE.exists() else 0
     started = last_alive = last_check = time.monotonic()
     seen: dict[int, _Seen] = {}
@@ -424,37 +507,54 @@ def watch(app_id: str) -> int:
                 if m != db_mtime:                   # settings changed meanwhile
                     db_mtime = m
                     rules, app = _load_rules(app_id)
-                    if not rules:
+                    if app is None:
                         return 0
-            mons = {m.name: m for m in x.monitors()}
+                    classes, fix = classes_for(app), fixes_fullscreen(app)
+                    if not (rules or fix):
+                        return 0
+            mon_list = x.monitors()
+            mons = {m.name: m for m in mon_list}
             alive = set()
             for win in x.client_windows():
                 name, cls = x.window_class(win)
-                target = rules.get(cls.lower()) or rules.get(name.lower())
-                if not target or target not in mons:
-                    continue                        # that screen isn't connected now
-                if "_NET_WM_STATE_HIDDEN" in x.states(win):
+                if cls.lower() not in classes and name.lower() not in classes:
+                    continue                        # not one of ours
+                st = x.states(win)
+                if "_NET_WM_STATE_HIDDEN" in st:
                     continue                        # minimized
                 geo = x.geometry(win)
                 if not geo:
                     continue
                 alive.add(win)
-                mon = mons[target]
-                cx, cy = geo[0] + geo[2] // 2, geo[1] + geo[3] // 2
                 s = seen.get(win)
-                if mon.contains(cx, cy):
-                    seen[win] = _Seen(pos=(geo[0], geo[1]))
-                    continue
-                if s is None:
+                new = s is None
+                if new:
                     s = seen[win] = _Seen(pos=(geo[0], geo[1]))
-                    _place(x, win, geo, mon, s)     # brand-new window: right away
-                    s.tries += 1
-                elif s.pos == (geo[0], geo[1]) and s.tries < 6:
-                    _place(x, win, geo, mon, s)     # stood still off its screen
-                    s.tries += 1
-                elif s.pos != (geo[0], geo[1]):
-                    s.pos = (geo[0], geo[1])        # still moving (dragged?): wait
-                    s.tries = 0
+                s.still = s.still + 1 if s.geo == geo else 0
+                s.geo = geo
+                target = rules.get(cls.lower()) or rules.get(name.lower())
+                mon = mons.get(target) if target else None
+                cx, cy = geo[0] + geo[2] // 2, geo[1] + geo[3] // 2
+                if mon and not mon.contains(cx, cy):
+                    if new:
+                        _place(x, win, geo, mon, s, fix, mon_list)   # brand-new: right away
+                        s.tries += 1
+                    elif s.pos == (geo[0], geo[1]) and s.tries < 6:
+                        _place(x, win, geo, mon, s, fix, mon_list)   # stood still off it
+                        s.tries += 1
+                    elif s.pos != (geo[0], geo[1]):
+                        s.pos = (geo[0], geo[1])    # still moving (dragged?): wait
+                        s.tries = 0
+                    continue
+                s.pos, s.tries, s.fs_tries = (geo[0], geo[1]), 0, 0
+                # On its screen. A game squeezed below the top bar? Wait until
+                # it has settled (games resize a few times while starting).
+                if fix and s.still >= 2 and s.fix_tries < 3:
+                    here = mon or _monitor_of(geo, mon_list)
+                    if here and wants_fullscreen(geo, st, x.frameless(win), here):
+                        _make_fullscreen(x, win, here)
+                        s.fix_tries += 1
+                        s.still = 0
             for gone in set(seen) - alive:
                 del seen[gone]
             time.sleep(0.5)
