@@ -265,6 +265,15 @@ class X11:
             return hints[2] == 0
         return bool(extents)        # WM said "0 border" explicitly
 
+    def resizable(self, win: int) -> bool:
+        """False when the window's Motif hints leave out "resize". Wine does
+        that for windows without a sizing border, e.g. borderless games."""
+        hints = self._prop32(win, "_MOTIF_WM_HINTS", ANY_PROPERTY_TYPE)
+        if len(hints) < 2 or not hints[0] & 1:        # flag 1 = functions set
+            return True
+        # bit 1 = "all functions except the ones listed", bit 2 = resize
+        return bool(hints[1] & 2) != bool(hints[1] & 1)
+
     def _message(self, win: int, name: str, data: list[int]) -> None:
         ev = _XEvent()
         ev.xclient.type = CLIENT_MESSAGE
@@ -389,15 +398,19 @@ def _monitor_of(geo, mons) -> Optional[Monitor]:
     return next((m for m in mons if m.contains(cx, cy)), None)
 
 
-def wants_fullscreen(geo, states: set[str], frameless: bool, mon: Monitor) -> bool:
+def wants_fullscreen(geo, states: set[str], frameless: bool, mon: Monitor,
+                     resizable: bool = True) -> bool:
     """
     A frameless window that is as wide as the screen and as tall as it except
     for a bar's worth (top bar, dock: up to 10 %) is a game in "windowed
-    fullscreen" that the window manager squeezed below the top bar. Maximized
-    windows are left alone: those are programs that want to stay below it.
+    fullscreen" that the window manager squeezed below the top bar. GNOME often
+    marks such a window maximized too (World of Warcraft). Maximized windows
+    that can be resized are left alone: those are programs with their own
+    title bar (Battle.net, Electron apps) that want to stay below the top bar.
     """
-    if not frameless or states & {"_NET_WM_STATE_FULLSCREEN", "_NET_WM_STATE_MAXIMIZED_VERT",
-                                  "_NET_WM_STATE_MAXIMIZED_HORZ", "_NET_WM_STATE_HIDDEN"}:
+    if not frameless or states & {"_NET_WM_STATE_FULLSCREEN", "_NET_WM_STATE_HIDDEN"}:
+        return False
+    if resizable and states & {"_NET_WM_STATE_MAXIMIZED_VERT", "_NET_WM_STATE_MAXIMIZED_HORZ"}:
         return False
     x, y, w, h = geo
     slack = mon.height // 10
@@ -409,6 +422,11 @@ def wants_fullscreen(geo, states: set[str], frameless: bool, mon: Monitor) -> bo
 
 
 def _make_fullscreen(x: X11, win: int, mon: Monitor) -> None:
+    maxed = [s for s in ("_NET_WM_STATE_MAXIMIZED_VERT", "_NET_WM_STATE_MAXIMIZED_HORZ")
+             if s in x.states(win)]
+    if maxed:                       # or it may come back maximized, below the bar
+        x.set_state(win, False, *maxed)
+        x.sync()
     x.fullscreen_on(win, mon.index)
     x.set_state(win, True, "_NET_WM_STATE_FULLSCREEN")
 
@@ -426,7 +444,7 @@ def _place(x: X11, win: int, geo, mon: Monitor, seen: _Seen, fix: bool = False,
     here = _monitor_of(geo, mons)
     if here and "_NET_WM_STATE_FULLSCREEN" not in st and x.frameless(win):
         covers = tuple(geo) == (here.x, here.y, here.width, here.height)
-        if covers or (fix and wants_fullscreen(geo, st, True, here)):
+        if covers or (fix and wants_fullscreen(geo, st, True, here, x.resizable(win))):
             # A frameless screen-sized window: GNOME won't move it at all (and
             # would squeeze it below the top bar if it did). "Be fullscreen on
             # that screen" works.
@@ -551,7 +569,8 @@ def watch(app_id: str) -> int:
                 # it has settled (games resize a few times while starting).
                 if fix and s.still >= 2 and s.fix_tries < 3:
                     here = mon or _monitor_of(geo, mon_list)
-                    if here and wants_fullscreen(geo, st, x.frameless(win), here):
+                    if here and wants_fullscreen(geo, st, x.frameless(win), here,
+                                                 x.resizable(win)):
                         _make_fullscreen(x, win, here)
                         s.fix_tries += 1
                         s.still = 0
