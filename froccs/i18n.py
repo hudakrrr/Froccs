@@ -330,6 +330,9 @@ HU = {
     "Real fullscreen": "Valódi teljes képernyő",
     "Fullscreen games cover the top bar instead of ending up one bar shorter than the screen. Turn off if a program's window goes fullscreen when it shouldn't.":
         "A teljes képernyős játékok a felső sávot is eltakarják, és nem lesznek egy sávnyival kisebbek a képernyőnél. Kapcsold ki, ha egy program ablaka akkor is teljes képernyős lesz, amikor nem kellene.",
+    "Use my screen's resolution": "A kijelzőm felbontásának használata",
+    "Before each start, sets the game's saved resolution and refresh rate to the screen's (World of Warcraft, Unreal and Unity games). Turn off to pick a lower resolution in the game yourself.":
+        "Minden indítás előtt a játék elmentett felbontását és frissítési gyakoriságát a kijelzőéhez igazítja (World of Warcraft, Unreal és Unity játékok). Kapcsold ki, ha a játékban magad szeretnél kisebb felbontást választani.",
     "Run in Gamescope": "Futtatás Gamescope-ban",
     "Valve's game compositor (as on the Steam Deck): always true fullscreen, the game sees exactly one screen. Try it when a game's window, resolution or mouse misbehaves.":
         "A Valve játékokhoz készült kompozitora (mint a Steam Decken): mindig valódi teljes képernyő, a játék pontosan egy kijelzőt lát. Próbáld ki, ha egy játék ablaka, felbontása vagy egere rosszul viselkedik.",

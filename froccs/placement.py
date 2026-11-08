@@ -56,6 +56,30 @@ class _XRRMonitorInfo(ctypes.Structure):
                 ("outputs", ctypes.POINTER(ctypes.c_ulong))]
 
 
+class _XRRModeInfo(ctypes.Structure):
+    _fields_ = [("id", ctypes.c_ulong), ("width", ctypes.c_uint), ("height", ctypes.c_uint),
+                ("dotClock", ctypes.c_ulong), ("hSyncStart", ctypes.c_uint),
+                ("hSyncEnd", ctypes.c_uint), ("hTotal", ctypes.c_uint), ("hSkew", ctypes.c_uint),
+                ("vSyncStart", ctypes.c_uint), ("vSyncEnd", ctypes.c_uint),
+                ("vTotal", ctypes.c_uint), ("name", ctypes.c_char_p),
+                ("nameLength", ctypes.c_uint), ("modeFlags", ctypes.c_ulong)]
+
+
+class _XRRScreenResources(ctypes.Structure):
+    _fields_ = [("timestamp", ctypes.c_ulong), ("configTimestamp", ctypes.c_ulong),
+                ("ncrtc", ctypes.c_int), ("crtcs", ctypes.POINTER(ctypes.c_ulong)),
+                ("noutput", ctypes.c_int), ("outputs", ctypes.POINTER(ctypes.c_ulong)),
+                ("nmode", ctypes.c_int), ("modes", ctypes.POINTER(_XRRModeInfo))]
+
+
+class _XRRCrtcInfo(ctypes.Structure):
+    _fields_ = [("timestamp", ctypes.c_ulong), ("x", ctypes.c_int), ("y", ctypes.c_int),
+                ("width", ctypes.c_uint), ("height", ctypes.c_uint), ("mode", ctypes.c_ulong),
+                ("rotation", ctypes.c_ushort), ("noutput", ctypes.c_int),
+                ("outputs", ctypes.POINTER(ctypes.c_ulong)), ("rotations", ctypes.c_ushort),
+                ("npossible", ctypes.c_int), ("possible", ctypes.POINTER(ctypes.c_ulong))]
+
+
 class _XineramaScreenInfo(ctypes.Structure):
     _fields_ = [("screen_number", ctypes.c_int), ("x_org", ctypes.c_short),
                 ("y_org", ctypes.c_short), ("width", ctypes.c_short),
@@ -105,6 +129,7 @@ class Monitor:
     height: int
     primary: bool
     index: int         # Xinerama index, for _NET_WM_FULLSCREEN_MONITORS
+    refresh: float = 0.0   # Hz of the current mode, 0 = unknown
 
     def contains(self, px: int, py: int) -> bool:
         return self.x <= px < self.x + self.width and self.y <= py < self.y + self.height
@@ -203,11 +228,15 @@ class X11:
             mons = xr.XRRGetMonitors(self.dpy, self.root, True, ctypes.byref(n))
             if mons:
                 try:
-                    return [Monitor(self.atom_name(m.name) or f"screen-{i + 1}", m.x, m.y,
-                                    m.width, m.height, bool(m.primary), i)
-                            for i, m in enumerate(mons[:n.value])]
+                    out = [Monitor(self.atom_name(m.name) or f"screen-{i + 1}", m.x, m.y,
+                                   m.width, m.height, bool(m.primary), i)
+                           for i, m in enumerate(mons[:n.value])]
                 finally:
                     xr.XRRFreeMonitors(mons)
+                rates = self._refresh_rates(xr)
+                for m in out:
+                    m.refresh = rates.get((m.x, m.y, m.width, m.height), 0.0)
+                return out
         xin = _lib("Xinerama")                      # very old setups: no names
         if xin:
             xin.XineramaQueryScreens.restype = ctypes.POINTER(_XineramaScreenInfo)
@@ -221,6 +250,41 @@ class X11:
                 finally:
                     self.x.XFree(scr)
         return []
+
+    def _refresh_rates(self, xr) -> dict[tuple[int, int, int, int], float]:
+        """{(x, y, width, height): Hz} of each active CRTC (the screen's current mode)."""
+        try:
+            xr.XRRGetScreenResourcesCurrent.restype = ctypes.POINTER(_XRRScreenResources)
+            xr.XRRGetScreenResourcesCurrent.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+            xr.XRRFreeScreenResources.argtypes = [ctypes.POINTER(_XRRScreenResources)]
+            xr.XRRGetCrtcInfo.restype = ctypes.POINTER(_XRRCrtcInfo)
+            xr.XRRGetCrtcInfo.argtypes = [ctypes.c_void_p, ctypes.POINTER(_XRRScreenResources),
+                                          ctypes.c_ulong]
+            xr.XRRFreeCrtcInfo.argtypes = [ctypes.POINTER(_XRRCrtcInfo)]
+        except AttributeError:
+            return {}
+        res = xr.XRRGetScreenResourcesCurrent(self.dpy, self.root)
+        if not res:
+            return {}
+        out = {}
+        try:
+            r = res.contents
+            hz = {}
+            for i in range(r.nmode):
+                m = r.modes[i]
+                if m.hTotal and m.vTotal:
+                    hz[m.id] = m.dotClock / (m.hTotal * m.vTotal)
+            for i in range(r.ncrtc):
+                c = xr.XRRGetCrtcInfo(self.dpy, res, r.crtcs[i])
+                if not c:
+                    continue
+                ci = c.contents
+                if ci.mode and ci.mode in hz:
+                    out[(ci.x, ci.y, ci.width, ci.height)] = hz[ci.mode]
+                xr.XRRFreeCrtcInfo(c)
+        finally:
+            xr.XRRFreeScreenResources(res)
+        return out
 
     # ---- windows
     def client_windows(self) -> list[int]:
@@ -391,6 +455,9 @@ class _Seen:
     geo: tuple = ()               # last geometry, to know when it stood still
     still: int = 0                # polls in a row with the same geometry
     fix_tries: int = 0            # fullscreen-fix attempts for this window
+    sent_fs: bool = False         # we asked for fullscreen when moving it to its screen
+    was_fs: bool = False          # it has been fullscreen: a game, not an ordinary window
+    fs_polls: int = 0             # polls in a row it has been fullscreen
 
 
 def _monitor_of(geo, mons) -> Optional[Monitor]:
@@ -399,18 +466,21 @@ def _monitor_of(geo, mons) -> Optional[Monitor]:
 
 
 def wants_fullscreen(geo, states: set[str], frameless: bool, mon: Monitor,
-                     resizable: bool = True) -> bool:
+                     maximized_ok: bool = False) -> bool:
     """
     A frameless window that is as wide as the screen and as tall as it except
     for a bar's worth (top bar, dock: up to 10 %) is a game in "windowed
     fullscreen" that the window manager squeezed below the top bar. GNOME often
     marks such a window maximized too (World of Warcraft). Maximized windows
-    that can be resized are left alone: those are programs with their own
-    title bar (Battle.net, Electron apps) that want to stay below the top bar.
+    are left alone unless maximized_ok: the window can't be resized (Wine's
+    sign of a borderless game) or it has been fullscreen before. The others are
+    programs with their own title bar (Battle.net, Electron apps) that want to
+    stay below the top bar.
     """
-    if not frameless or states & {"_NET_WM_STATE_FULLSCREEN", "_NET_WM_STATE_HIDDEN"}:
-        return False
-    if resizable and states & {"_NET_WM_STATE_MAXIMIZED_VERT", "_NET_WM_STATE_MAXIMIZED_HORZ"}:
+    blocking = {"_NET_WM_STATE_FULLSCREEN", "_NET_WM_STATE_HIDDEN"}
+    if not maximized_ok:
+        blocking |= {"_NET_WM_STATE_MAXIMIZED_VERT", "_NET_WM_STATE_MAXIMIZED_HORZ"}
+    if not frameless or states & blocking:
         return False
     x, y, w, h = geo
     slack = mon.height // 10
@@ -427,6 +497,7 @@ def _make_fullscreen(x: X11, win: int, mon: Monitor) -> None:
     if maxed:                       # or it may come back maximized, below the bar
         x.set_state(win, False, *maxed)
         x.sync()
+        time.sleep(0.2)
     x.fullscreen_on(win, mon.index)
     x.set_state(win, True, "_NET_WM_STATE_FULLSCREEN")
 
@@ -444,11 +515,12 @@ def _place(x: X11, win: int, geo, mon: Monitor, seen: _Seen, fix: bool = False,
     here = _monitor_of(geo, mons)
     if here and "_NET_WM_STATE_FULLSCREEN" not in st and x.frameless(win):
         covers = tuple(geo) == (here.x, here.y, here.width, here.height)
-        if covers or (fix and wants_fullscreen(geo, st, True, here, x.resizable(win))):
+        if covers or (fix and wants_fullscreen(geo, st, True, here, not x.resizable(win))):
             # A frameless screen-sized window: GNOME won't move it at all (and
             # would squeeze it below the top bar if it did). "Be fullscreen on
             # that screen" works.
             _make_fullscreen(x, win, mon)
+            seen.sent_fs = True
             return
     if "_NET_WM_STATE_FULLSCREEN" in st:
         if seen.fs_tries < 2:
@@ -477,6 +549,18 @@ def _place(x: X11, win: int, geo, mon: Monitor, seen: _Seen, fix: bool = False,
         x.sync()
         time.sleep(0.2)
         x.set_state(win, True, *maxed)
+
+
+def _log(app_id: str, text: str) -> None:
+    """run/screen-<id>.log: what the watcher did (kept short)."""
+    path = RUN_DIR / f"screen-{app_id}.log"
+    try:
+        if path.exists() and path.stat().st_size > 200_000:
+            path.write_text("")
+        with open(path, "a") as f:
+            f.write(time.strftime("%H:%M:%S ") + text + "\n")
+    except OSError:
+        pass
 
 
 def _load_rules(app_id: str) -> tuple[dict[str, str], object]:
@@ -538,18 +622,27 @@ def watch(app_id: str) -> int:
                 if cls.lower() not in classes and name.lower() not in classes:
                     continue                        # not one of ours
                 st = x.states(win)
+                alive.add(win)                      # minimized ones too: keep what we know
                 if "_NET_WM_STATE_HIDDEN" in st:
                     continue                        # minimized
                 geo = x.geometry(win)
                 if not geo:
                     continue
-                alive.add(win)
                 s = seen.get(win)
                 new = s is None
                 if new:
                     s = seen[win] = _Seen(pos=(geo[0], geo[1]))
                 s.still = s.still + 1 if s.geo == geo else 0
+                if new or s.geo != geo:
+                    _log(app_id, f"{hex(win)} {cls} {geo} {' '.join(sorted(st))}")
                 s.geo = geo
+                if "_NET_WM_STATE_FULLSCREEN" in st:
+                    s.was_fs = True
+                    s.fs_polls += 1
+                    if s.fs_polls >= 4:      # it stuck: allow fixing the next squeeze too
+                        s.fix_tries = 0
+                else:
+                    s.fs_polls = 0
                 target = rules.get(cls.lower()) or rules.get(name.lower())
                 mon = mons.get(target) if target else None
                 cx, cy = geo[0] + geo[2] // 2, geo[1] + geo[3] // 2
@@ -569,8 +662,12 @@ def watch(app_id: str) -> int:
                 # it has settled (games resize a few times while starting).
                 if fix and s.still >= 2 and s.fix_tries < 3:
                     here = mon or _monitor_of(geo, mon_list)
+                    # Once it has been fullscreen, it's a game: GNOME squeezing it
+                    # (after switching away and back) may also mark it maximized.
                     if here and wants_fullscreen(geo, st, x.frameless(win), here,
-                                                 x.resizable(win)):
+                                                 s.sent_fs or s.was_fs
+                                                 or not x.resizable(win)):
+                        _log(app_id, f"{hex(win)} squeezed to {geo}: fullscreen on {here.name}")
                         _make_fullscreen(x, win, here)
                         s.fix_tries += 1
                         s.still = 0

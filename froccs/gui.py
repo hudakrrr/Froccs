@@ -925,6 +925,13 @@ class SettingsDialog(Adw.PreferencesDialog):
                        "fullscreen when it shouldn't."))
         self.fullscreen_fix.set_active(self.app.fullscreen_fix)
         gm.add(self.fullscreen_fix)
+        self.match_res = Adw.SwitchRow(
+            title=_("Use my screen's resolution"),
+            subtitle=_("Before each start, sets the game's saved resolution and refresh "
+                       "rate to the screen's (World of Warcraft, Unreal and Unity games). "
+                       "Turn off to pick a lower resolution in the game yourself."))
+        self.match_res.set_active(self.app.match_resolution)
+        gm.add(self.match_res)
         have_gs = bool(shutil.which("gamescope"))
         self.gamescope = Adw.SwitchRow(
             title=_("Run in Gamescope"),
@@ -1147,6 +1154,7 @@ class SettingsDialog(Adw.PreferencesDialog):
         a.mangohud = self.mangohud.get_active()
         a.fps_limit = int(self.fps.get_value())
         a.fullscreen_fix = self.fullscreen_fix.get_active()
+        a.match_resolution = self.match_res.get_active()
         if self.gamescope.get_sensitive():
             a.gamescope = self.gamescope.get_active()
         self._harvest_screens()

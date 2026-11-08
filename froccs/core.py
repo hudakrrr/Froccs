@@ -144,6 +144,7 @@ class App:
     fps_limit: int = 0            # 0 = no limit
     fullscreen_fix: bool = True   # promote "screen minus top bar" game windows to fullscreen
     gamescope: bool = False       # run inside Valve's Gamescope (always real fullscreen)
+    match_resolution: bool = True  # write the screen's resolution into the game's settings
     fonts: list = field(default_factory=list)       # font files we installed
     share_home: bool = True       # Documents, Desktop... = your real folders
     drives: dict = field(default_factory=dict)      # {"d": "/path"}
@@ -691,6 +692,19 @@ def _user_args(app: App) -> list[str]:
         return app.args.split()
 
 
+def _match_resolution(app: App) -> None:
+    """Fix the resolution games saved (see gameconfig); note it in the log."""
+    from . import gameconfig
+    try:
+        changed = gameconfig.apply_on_launch(app, running=is_running(app))
+    except Exception as e:                     # never block a start over this
+        changed = [f"(failed: {e})"]
+    if changed:
+        with open(app.log_file, "a") as log:
+            for path in changed:
+                log.write(f"Fröccs: set the screen's resolution in {path}\n")
+
+
 def launch_detached(app: App, exe: Optional[str] = None, args: Optional[list] = None,
                     user_args: bool = False, shortcut: int = -1) -> None:
     """Start the app (or another exe in its prefix) without waiting."""
@@ -701,6 +715,7 @@ def launch_detached(app: App, exe: Optional[str] = None, args: Optional[list] = 
     target = exe or app.exe
     _trim_log(app.log_file)
     app.log_file.parent.mkdir(parents=True, exist_ok=True)
+    _match_resolution(app)
     extra = _user_args(app) if user_args else []
     cmd = [*wrappers(app), umu_path() or "umu-run", target, *extra,
            *devices.win_args(app, args or [])]
@@ -720,6 +735,7 @@ def exec_in_prefix(app: App, exe: str, args: list[str], shortcut: int = -1) -> N
     placement.start_watcher(app)
     _trim_log(app.log_file)
     app.log_file.parent.mkdir(parents=True, exist_ok=True)
+    _match_resolution(app)
     fd = os.open(app.log_file, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
     os.dup2(fd, 1)
     os.dup2(fd, 2)
@@ -766,9 +782,16 @@ def gamescope_command(app: App) -> list[str]:
         or next((m for m in mons if m.primary), None) or (mons[0] if mons else None)
     cmd = ["gamescope", "-f", "--force-grab-cursor"]
     if mon:
-        cmd += ["-W", str(mon.width), "-H", str(mon.height)]
+        # -W/-H: Gamescope's window, -w/-h: what the game is told. Same size,
+        # so the game renders at the screen's own resolution.
+        cmd += ["-W", str(mon.width), "-H", str(mon.height),
+                "-w", str(mon.width), "-h", str(mon.height)]
+    # -r is Gamescope's refresh rate (and FPS cap). Say it outright: some
+    # Gamescope versions fall back to 60 Hz in a window on a 144 Hz screen.
     if app.fps_limit > 0:
         cmd += ["-r", str(app.fps_limit)]
+    elif mon and mon.refresh:
+        cmd += ["-r", str(int(round(mon.refresh)))]
     if app.mangohud and shutil.which("mangohud"):
         cmd.append("--mangoapp")              # MangoHud the Gamescope way
     return cmd + ["--"]

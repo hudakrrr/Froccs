@@ -79,10 +79,21 @@ Settings → Advanced → *Games*:
   bar, so the game ends up one bar shorter than the screen. Fröccs spots such
   windows and makes them real fullscreen on their screen. Turn it off for a
   program whose window goes fullscreen when it shouldn't.
+- **Use my screen's resolution** (on by default). Games remember their
+  resolution in their own settings file, and under Wine that saved value often
+  goes wrong: 60 Hz on a 144 Hz screen, the wrong monitor, or both monitors
+  side by side. Before each start Fröccs writes the screen's real resolution and
+  refresh rate into it: World of Warcraft (`WTF/Config.wtf`), Unreal Engine
+  games (`GameUserSettings.ini`) and Unity games (registry). Only resolution,
+  refresh rate and, if you chose a *Screen*, the monitor are changed. A game
+  that hasn't saved its settings yet gets them from its second start on. Turn
+  it off to pick a lower resolution in the game yourself. Changes are noted in
+  the program's log.
 - **Run in Gamescope**: the game runs inside Valve's Gamescope (as on the Steam
   Deck). It's always true fullscreen and the game sees exactly one screen. Try it
   when a game's window, resolution or mouse misbehaves. Needs the `gamescope`
-  package.
+  package. It now gets the screen's refresh rate (e.g. 144 Hz) instead of
+  possibly running at 60 Hz.
 - **GameMode**: now actually switches on. `gamemoderun` couldn't work inside
   Proton's Steam Runtime container, so Fröccs asks the GameMode service directly.
 - **Proton version**: Valve's own builds that Steam installed (Proton 10.0,
@@ -98,7 +109,7 @@ Settings → Advanced → *Games*:
 |---|---|
 | General | name, **display scaling**, **screen** (multi-monitor), start at login, launch arguments and environment variables (with an on/off switch), apps-menu entries |
 | Files | use my own Documents/Desktop/Downloads, hide drive Z:, extra drive letters, **file types** ("Open with"), **serial ports** COM1–COM4 for PLC cables |
-| Advanced | Proton version (pin one, including Valve's builds from Steam), graphics (Vulkan/OpenGL), NTSYNC, native Wayland, DLL overrides, **games** (real fullscreen, Gamescope, GameMode, MangoHud, FPS limit), login links, debug mode |
+| Advanced | Proton version (pin one, including Valve's builds from Steam), graphics (Vulkan/OpenGL), NTSYNC, native Wayland, DLL overrides, **games** (real fullscreen, screen resolution, Gamescope, GameMode, MangoHud, FPS limit), login links, debug mode |
 | Backup | **restore points** (create, restore, delete), export to a `.froccs` file |
 
 ### Main menu
