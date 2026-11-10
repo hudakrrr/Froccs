@@ -927,9 +927,9 @@ class SettingsDialog(Adw.PreferencesDialog):
         gm.add(self.fullscreen_fix)
         self.match_res = Adw.SwitchRow(
             title=_("Use my screen's resolution"),
-            subtitle=_("Before each start, sets the game's saved resolution and refresh "
-                       "rate to the screen's (World of Warcraft, Unreal and Unity games). "
-                       "Turn off to pick a lower resolution in the game yourself."))
+            subtitle=_("Before each start, fixes a saved resolution or refresh rate that doesn't "
+                       "fit the screen (World of Warcraft, Unreal and Unity games). "
+                       "What you pick in the game is kept."))
         self.match_res.set_active(self.app.match_resolution)
         gm.add(self.match_res)
         have_gs = bool(shutil.which("gamescope"))

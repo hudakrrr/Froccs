@@ -35,8 +35,10 @@ import ctypes
 import ctypes.util
 import fcntl
 import os
+import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 from .i18n import _
@@ -171,6 +173,10 @@ class X11:
         x.XSendEvent.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int,
                                  ctypes.c_long, ctypes.POINTER(_XEvent)]
         x.XFlush.argtypes = [ctypes.c_void_p]
+        x.XChangeProperty.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong,
+                                      ctypes.c_ulong, ctypes.c_int, ctypes.c_int,
+                                      ctypes.c_void_p, ctypes.c_int]
+        x.XDeleteProperty.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong]
         x.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
         x.XCloseDisplay.argtypes = [ctypes.c_void_p]
         x.XSetErrorHandler(_ignore_errors)
@@ -215,6 +221,14 @@ class X11:
             return list(ctypes.cast(data, ctypes.POINTER(ctypes.c_ulong))[:n.value])
         finally:
             self.x.XFree(data)
+
+    def set_prop32(self, win: int, name: str, rtype: int, values: list[int]) -> None:
+        arr = (ctypes.c_long * len(values))(*values)
+        self.x.XChangeProperty(self.dpy, win, self.atom(name), rtype, 32, 0,  # PropModeReplace
+                               arr, len(values))
+
+    def delete_prop(self, win: int, name: str) -> None:
+        self.x.XDeleteProperty(self.dpy, win, self.atom(name))
 
     # ---- screens
     def monitors(self) -> list[Monitor]:
@@ -492,12 +506,10 @@ def wants_fullscreen(geo, states: set[str], frameless: bool, mon: Monitor,
 
 
 def _make_fullscreen(x: X11, win: int, mon: Monitor) -> None:
-    maxed = [s for s in ("_NET_WM_STATE_MAXIMIZED_VERT", "_NET_WM_STATE_MAXIMIZED_HORZ")
-             if s in x.states(win)]
-    if maxed:                       # or it may come back maximized, below the bar
-        x.set_state(win, False, *maxed)
-        x.sync()
-        time.sleep(0.2)
+    # Straight to fullscreen, even if maximized: GNOME drops the maximized state
+    # itself. Unmaximizing first would shrink the window to ~80 % of the screen
+    # for a moment, and games in "windowed fullscreen" (WoW) take that size as
+    # their resolution (WoW: "Custom", 2289x1255 on a 2560x1440 screen).
     x.fullscreen_on(win, mon.index)
     x.set_state(win, True, "_NET_WM_STATE_FULLSCREEN")
 
@@ -551,6 +563,67 @@ def _place(x: X11, win: int, geo, mon: Monitor, seen: _Seen, fix: bool = False,
         x.set_state(win, True, *maxed)
 
 
+# ------------------------------------------------------------ work areas --
+#
+# A game in "windowed fullscreen" (WoW) that changes its resolution maximizes
+# its window. Windows sizes a maximized window to the screen's work area, and
+# Wine takes that from GNOME's _GTK_WORKAREAS_D0: the screen minus the top bar.
+# So the window doesn't cover the screen, Wine asks GNOME to maximize it instead
+# of making it fullscreen, GNOME squeezes it below the top bar, and the game
+# takes 2560x1408 as its resolution ("Custom"). While a game runs we publish
+# each screen whole as its work area, so a maximized game covers its screen and
+# Wine makes it fullscreen. GNOME's own windows don't read this property; the
+# real values are put back when the last watcher ends.
+
+_WA = "_GTK_WORKAREAS_D0"
+_WA_SAVED = "_FROCCS_SAVED_WORKAREAS"      # GNOME's values while we replace them
+_CARDINAL = 6
+
+
+def _full_workareas(real: list[int], mons: list[Monitor]) -> list[int]:
+    out = []
+    for i in range(0, len(real) - len(real) % 4, 4):
+        x, y, w, h = real[i:i + 4]
+        mon = next((m for m in mons if m.contains(x + w // 2, y + h // 2)), None)
+        out += [mon.x, mon.y, mon.width, mon.height] if mon else [x, y, w, h]
+    return out
+
+
+def claim_workareas(x: X11, mons: list[Monitor]) -> None:
+    """Publish whole screens as work areas (again, if GNOME rewrote them)."""
+    current = x._prop32(x.root, _WA, _CARDINAL)
+    saved = x._prop32(x.root, _WA_SAVED, _CARDINAL)
+    if not current:
+        return                                  # not GNOME (or too old): nothing to do
+    if saved and current == _full_workareas(saved, mons):
+        return                                  # ours, still in place
+    if current != _full_workareas(current, mons):
+        saved = current                         # GNOME's (new) real values
+        x.set_prop32(x.root, _WA_SAVED, _CARDINAL, saved)
+    if saved:
+        x.set_prop32(x.root, _WA, _CARDINAL, _full_workareas(saved, mons))
+    x.sync()
+
+
+def release_workareas(x: X11, own_lock: Path) -> None:
+    """Put GNOME's values back, unless another watcher still needs ours."""
+    for lock in RUN_DIR.glob("screen-*.lock"):
+        if lock == own_lock:
+            continue
+        try:
+            with open(lock, "w") as f:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return                              # another program's watcher runs
+        except OSError:
+            continue
+    saved = x._prop32(x.root, _WA_SAVED, _CARDINAL)
+    if saved:
+        x.set_prop32(x.root, _WA, _CARDINAL, saved)
+        x.delete_prop(x.root, _WA_SAVED)
+        x.sync()
+
+
 def _log(app_id: str, text: str) -> None:
     """run/screen-<id>.log: what the watcher did (kept short)."""
     path = RUN_DIR / f"screen-{app_id}.log"
@@ -591,11 +664,19 @@ def watch(app_id: str) -> int:
         x = X11()
     except OSError:
         return 1
+    import signal
+
+    def _stop(*_a):
+        raise SystemExit(0)                         # kill/logout: still clean up below
+    signal.signal(signal.SIGTERM, _stop)
+    signal.signal(signal.SIGHUP, _stop)
     prefix = app.prefix
     classes, fix = classes_for(app), fixes_fullscreen(app)
     db_mtime = DB_FILE.stat().st_mtime if DB_FILE.exists() else 0
     started = last_alive = last_check = time.monotonic()
     seen: dict[int, _Seen] = {}
+    code = Path(__file__).resolve()
+    code_mtime = code.stat().st_mtime
     try:
         while True:
             now = time.monotonic()
@@ -605,6 +686,17 @@ def watch(app_id: str) -> int:
                     last_alive = now
                 elif now - last_alive > 15 and now - started > 60:
                     return 0                        # the program closed
+                try:
+                    updated = code.stat().st_mtime != code_mtime
+                except OSError:
+                    updated = False                 # mid-install: look again next time
+                if updated:
+                    # Fröccs was updated while the program runs: carry on as the
+                    # new version (the lock is freed on exec, the new one takes it;
+                    # the work areas stay as they are).
+                    x.close()
+                    os.execv(sys.executable, [sys.executable, "-m", "froccs",
+                                              "keep-on-screen", app_id])
                 m = DB_FILE.stat().st_mtime if DB_FILE.exists() else 0
                 if m != db_mtime:                   # settings changed meanwhile
                     db_mtime = m
@@ -615,6 +707,8 @@ def watch(app_id: str) -> int:
                     if not (rules or fix):
                         return 0
             mon_list = x.monitors()
+            if fix:
+                claim_workareas(x, mon_list)
             mons = {m.name: m for m in mon_list}
             alive = set()
             for win in x.client_windows():
@@ -675,4 +769,7 @@ def watch(app_id: str) -> int:
                 del seen[gone]
             time.sleep(0.5)
     finally:
-        x.close()
+        try:
+            release_workareas(x, RUN_DIR / f"screen-{app_id}.lock")
+        finally:
+            x.close()

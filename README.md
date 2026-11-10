@@ -77,18 +77,22 @@ Settings → Advanced → *Games*:
   "windowed fullscreen"/borderless modes) don't ask for fullscreen. They open a
   frameless window as big as the screen, and the desktop keeps it below the top
   bar, so the game ends up one bar shorter than the screen. Fröccs spots such
-  windows and makes them real fullscreen on their screen. Turn it off for a
+  windows and makes them real fullscreen on their screen. While the game runs,
+  Wine is told each screen is free up to its edges (the work area), so a game
+  that maximizes itself after a resolution change covers the screen instead of
+  ending up below the top bar with a "Custom" resolution. Turn it off for a
   program whose window goes fullscreen when it shouldn't.
 - **Use my screen's resolution** (on by default). Games remember their
   resolution in their own settings file, and under Wine that saved value often
   goes wrong: 60 Hz on a 144 Hz screen, the wrong monitor, or both monitors
-  side by side. Before each start Fröccs writes the screen's real resolution and
-  refresh rate into it: World of Warcraft (`WTF/Config.wtf`), Unreal Engine
-  games (`GameUserSettings.ini`) and Unity games (registry). Only resolution,
+  side by side. Before each start Fröccs fixes a saved value that can't be
+  right (a resolution bigger than the screen, a refresh rate the screen can't
+  do) in World of Warcraft (`WTF/Config.wtf`), Unreal Engine games
+  (`GameUserSettings.ini`) and Unity games (registry). A resolution or refresh
+  rate you picked in the game that fits the screen is kept. Only resolution,
   refresh rate and, if you chose a *Screen*, the monitor are changed. A game
-  that hasn't saved its settings yet gets them from its second start on. Turn
-  it off to pick a lower resolution in the game yourself. Changes are noted in
-  the program's log.
+  that hasn't saved its settings yet gets them from its second start on.
+  Changes are noted in the program's log.
 - **Run in Gamescope**: the game runs inside Valve's Gamescope (as on the Steam
   Deck). It's always true fullscreen and the game sees exactly one screen. Try it
   when a game's window, resolution or mouse misbehaves. Needs the `gamescope`

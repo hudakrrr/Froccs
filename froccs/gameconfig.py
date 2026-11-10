@@ -8,9 +8,12 @@ window was on the other screen, at 60 Hz, or it saved the whole desktop
 (both monitors side by side). Then every start uses the bad value again.
 
 So before each start we fix the setting in the files that the common game
-engines write. We set only resolution, refresh rate and monitor. Graphics
-quality, window mode and the rest stay as they are, and we only touch files the
-game has already made:
+engines write, but only when it can't be right: a resolution bigger than the
+screen (or missing, or garbage), a refresh rate the screen can't do. A
+resolution or refresh rate the player picked that fits the screen is left
+alone. We touch only resolution, refresh rate and monitor. Graphics quality,
+window mode and the rest stay as they are, and we only touch files the game
+has already made:
 
 * World of Warcraft (all editions): WTF/Config.wtf
   gxFullscreenResolution, gxRefresh and, if a screen is chosen, gxMonitor
@@ -61,6 +64,29 @@ def _hz(mon) -> int:
     return int(round(mon.refresh)) if mon.refresh else 0
 
 
+def _fits(w, h, mon) -> bool:
+    """A saved size the screen can show: keep it (the player may have picked it)."""
+    try:
+        w, h = int(w), int(h)
+    except (TypeError, ValueError):
+        return False
+    return 0 < w <= mon.width and 0 < h <= mon.height
+
+
+def _wow_size_ok(value: str, mon) -> bool:
+    m = re.fullmatch(r"\s*(\d+)\s*x\s*(\d+)\s*", value or "", re.IGNORECASE)
+    return bool(m) and _fits(m.group(1), m.group(2), mon)
+
+
+def _hz_ok(value: str, mon) -> bool:
+    """A saved refresh rate the screen can do (rounding allowed)."""
+    try:
+        hz = float(value)
+    except (TypeError, ValueError):
+        return False
+    return 0 < hz <= _hz(mon) + 1
+
+
 # ------------------------------------------------------- World of Warcraft --
 
 _WTF_LINE = re.compile(r'^(\s*SET\s+)(\w+)(\s+)"([^"]*)"(.*)$', re.IGNORECASE)
@@ -106,8 +132,16 @@ def fix_wow(path: Path, app, mons) -> bool:
     mon = _target(app, mons, game_index)
     if not mon:
         return False
-    want = {"gxFullscreenResolution": f"{mon.width}x{mon.height}"}
-    if _hz(mon):
+    def saved(key):
+        i = found.get(key.lower())
+        return _WTF_LINE.match(lines[i]).group(4) if i is not None else None
+
+    want = {}
+    if not _wow_size_ok(saved("gxFullscreenResolution"), mon):
+        want["gxFullscreenResolution"] = f"{mon.width}x{mon.height}"
+    if "gxwindowedresolution" in found and not _wow_size_ok(saved("gxWindowedResolution"), mon):
+        want["gxWindowedResolution"] = f"{mon.width}x{mon.height}"
+    if _hz(mon) and not _hz_ok(saved("gxRefresh"), mon):
         want["gxRefresh"] = str(_hz(mon))
     if app.screen and len(mons) > 1:
         want["gxMonitor"] = str(wine_order(mons).index(mon))
@@ -137,6 +171,12 @@ _UE_KEYS = {
     "desiredscreenwidth": "w", "desiredscreenheight": "h",
     "lastuserconfirmeddesiredscreenwidth": "w", "lastuserconfirmeddesiredscreenheight": "h",
 }
+_UE_PAIRS = {
+    "resolutionsizex": "resolutionsizey",
+    "lastuserconfirmedresolutionsizex": "lastuserconfirmedresolutionsizey",
+    "desiredscreenwidth": "desiredscreenheight",
+    "lastuserconfirmeddesiredscreenwidth": "lastuserconfirmeddesiredscreenheight",
+}
 _INI_LINE = re.compile(r"^(\s*)(\w+)(\s*=\s*)(-?\d+)(\s*)$")
 
 
@@ -160,11 +200,24 @@ def fix_unreal(path: Path, app, mons) -> bool:
     enc = "utf-16" if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8"
     lines = raw.decode(enc, errors="surrogateescape").split("\n")
     size = {"w": str(mon.width), "h": str(mon.height)}
+    saved = {}
+    for line in lines:
+        m = _INI_LINE.match(line.rstrip("\r"))
+        if m and m.group(2).lower() in _UE_KEYS:
+            saved[m.group(2).lower()] = m.group(4)
+    # Each width/height pair is kept if it fits the screen
+    bad = set()
+    for key, wh in _UE_KEYS.items():
+        if wh != "w":
+            continue
+        pair = _UE_PAIRS[key]
+        if not _fits(saved.get(key, size["w"]), saved.get(pair, size["h"]), mon):
+            bad |= {key, pair}
     changed = False
     for i, line in enumerate(lines):
         cr = line.endswith("\r")
         m = _INI_LINE.match(line.rstrip("\r"))
-        if not m or m.group(2).lower() not in _UE_KEYS:
+        if not m or m.group(2).lower() not in bad:
             continue
         value = size[_UE_KEYS[m.group(2).lower()]]
         if m.group(4) != value:
@@ -189,6 +242,15 @@ def fix_unity(prefix: Path, app, mons) -> bool:
     try:
         lines = _read(reg).split("\n")
     except OSError:
+        return False
+    saved = {"Width": [], "Height": []}
+    for line in lines:
+        m = _UNITY.match(line)
+        if m:
+            saved[m.group(2)].append(int(line.split("dword:")[1][:8], 16))
+    # Width and Height keys carry different hashes: judge them together
+    if _fits(max(saved["Width"], default=mon.width), max(saved["Height"], default=mon.height), mon) \
+            and min(saved["Width"] + saved["Height"], default=1) > 0:
         return False
     changed = False
     for i, line in enumerate(lines):
